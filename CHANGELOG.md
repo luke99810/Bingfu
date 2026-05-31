@@ -9,39 +9,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] (未发布)
 
+---
+
+## [0.5.0] - 2026-05-19
+
 ### Added (新增)
 
-- **孙子兵法战术引擎**
-  - `bingfu/tactics.py` — 完整的孙子兵法十三篇战术实现
-    - `TacticsEngine` 类：战场态势分析
-    - `SunTzuAgent` 类：智能军师Agent
-    - `TacticType` 枚举：13种战术类型
-    - `TacticalContext` 模型：战术上下文
+- **将军战力体系** 🆕
+  - `bingfu/profile.py` — 将军档案数据模型
+    - `CombatStyle` 枚举：5种作战风格（谋略型/突击型/统帅型/勇武型/侦察型）
+    - `CombatStats` 模型：五维战力值（攻击力/防御力/谋略值/速度/智力），1-100分
+    - `GeneralProfile` 模型：将军完整档案（风格+专长+弱项+战力+描述）
+  - `bingfu/assessment.py` — 军情评估模块
+    - `TaskComplexity` 枚举：4级难度（易/中/难/极难）
+    - `TaskAssessment` 模型：评估结果（复杂度/所需能力/敌方战力）
+    - `TaskAssessor` 类：LLM优先+规则降级评估器
+  - `bingfu/matcher.py` — 点兵台智能匹配引擎
+    - `MatchResult` 模型：单将军匹配结果
+    - `TaskMatcher` 类：加权评分算法（专长40%+战力30%+作风20%-弱项10%）
+  - `bingfu/presets.py` — 名将预设档案
+    - 韩信(统帅型)、白起(突击型)、诸葛亮(谋略型)、项羽(勇武型)
+    - 斥候(侦察型)、谋士、猛将 三个通用预设
+    - `get_preset(name)` 和 `list_presets()` 工具函数
 
-- **古代名将示例**
-  - `examples/famous_generals.py` — 十大名将Agent实现
-    - 白起、韩信、项羽、诸葛亮、岳飞等
-    - 完整战役模拟场景
+- **智能派兵系统** 🆕
+  - `BingFu.smart_drum(task)` — 自动选最优将领执行任务
+  - `BingFu.match_task(task)` — 展示所有将领匹配评分
+  - `BingFu.assess_task(task)` — 评估任务难度
+  - `Commander.smart_drum(task)` — 指挥系统智能派兵
+  - `Commander.match_task(task)` — 点兵接口
+  - `Commander.assess_task(task)` — 军情评估接口
+  - `Commander.drum_one/all()` — **修复桩方法**，实际调用 agent.drum()
+  - `Commander.gong_one/all()` — **修复桩方法**，实际调用 agent.gong()
+  - `BingFu.drum/gong()` — **修复桩方法**
+  - `coordinate()` 新增 `"smart"` 策略
 
-- **工具与记忆示例**
-  - `examples/tool_usage.py` — 工具使用完整示例
-  - `examples/memory_usage.py` — 记忆系统完整示例
+- **Agent 战力档案支持** 🆕
+  - `Agent.profile` 字段：挂载 GeneralProfile
+  - `Agent.get_profile_summary()` — 战力档案摘要
+  - `execute()` 自动注入档案信息到 system_prompt
 
-- **CLI指南**
-  - `examples/cli_guide.py` — 完整CLI使用文档
+- **控制台智能派兵** 🆕
+  - `/match <任务>` — 点兵命令，展示所有将领匹配评分
+  - `/smart <任务>` — 智能派兵，自动选最优将领执行
+  - LLM action `smart_assign` — 自然语言理解后自动调用智能派兵
+  - `_build_llm_context()` 包含将领档案信息
 
-- **单元测试补全**
-  - `tests/test_tool.py` — Tool类完整测试
-  - `tests/test_memory.py` — Memory类完整测试
+- **启动脚本增强**
+  - `launch.py` v0.5.0 — 自动加载预设档案，启用指挥系统
 
 ### Changed (变更)
-- 更新README，添加新功能说明
-- 更新`__init__.py`，导出tactics模块
-- 完善项目结构文档
+
+- `bingfu/__init__.py` — 导出新增模块（profile/assessment/matcher/presets）
+- `pyproject.toml` — 版本更新至 0.5.0，Python 版本要求降至 3.9
+- `bingfu/bingfu.py` — 版本更新至 0.5.0
+- 控制台标题更新为 v0.5.0
+
+### Fixed (修复)
+
+- `Commander.drum_one/all()` — 从占位字符串改为实际调用 agent.drum()
+- `Commander.gong_one/all()` — 从占位字符串改为实际调用 agent.gong()
+- `BingFu.drum()` — 从占位字符串改为实际调用 agent.drum()
+- `BingFu.gong()` — 从占位字符串改为实际调用 agent.gong()
+- `pydantic` 字段命名冲突：`__matcher` 替代 `_matcher`
 
 ---
 
-## [0.2.0] - 2026-05-18
+## [0.4.0] - 2026-05-18
 
 ### Added (新增)
 

@@ -22,7 +22,7 @@ class BingFu(BaseModel):
     """
     
     name: str = Field(default="BingFu", description="Framework name")
-    version: str = Field(default="0.4.0", description="Framework version")
+    version: str = Field(default="0.5.0", description="Framework version")
     
     # Core components (核心组件)
     agents: Dict[str, Agent] = Field(
@@ -167,68 +167,146 @@ class BingFu(BaseModel):
         return False
     
     # ========== Signal Operations (信号操作) ==========
-    
+
     def drum(self, agent_name: str, task: str) -> str:
         """
-        Send drum signal (击鼓) to an agent.
-        
+        击鼓 — 向指定将领下达军令
+
         Args:
-            agent_name (str): Target agent name.
-            task (str): Task description.
-            
+            agent_name: 目标将领名称
+            task: 任务描述
+
         Returns:
-            str: Result message.
+            str: 执行结果
         """
         agent = self.get_agent(agent_name)
         if not agent:
-            return f"❌ Agent '{agent_name}' not found."
-        
-        # In real implementation, this would call agent.drum(task)
-        return f"🥁 BingFu drums '{agent_name}': {task}"
-    
+            return f"❌ 未找到将领 '{agent_name}'"
+
+        try:
+            result = agent.drum(task)
+            return result
+        except Exception as e:
+            return f"❌ {agent_name} 执行失败: {e}"
+
     def gong(self, agent_name: str) -> str:
         """
-        Send gong signal (鸣金) to an agent.
-        
+        鸣金 — 让指定将领停止
+
         Args:
-            agent_name (str): Target agent name.
-            
+            agent_name: 目标将领名称
+
         Returns:
-            str: Result message.
+            str: 停止结果
         """
         agent = self.get_agent(agent_name)
         if not agent:
-            return f"❌ Agent '{agent_name}' not found."
-        
-        # In real implementation, this would call agent.gong()
-        return f"🔔 BingFu gongs '{agent_name}'"
-    
+            return f"❌ 未找到将领 '{agent_name}'"
+
+        try:
+            return agent.gong()
+        except Exception as e:
+            return f"❌ {agent_name} 停止失败: {e}"
+
     def drum_all(self, task: str) -> Dict[str, str]:
         """
-        Send drum signal (击鼓) to all agents.
-        
+        击鼓 — 向所有将领下达军令
+
         Args:
-            task (str): Task description.
-            
+            task: 任务描述
+
         Returns:
-            Dict[str, str]: Results from each agent.
+            Dict[str, str]: 每个将领的执行结果
         """
         results = {}
         for name in self.agents:
             results[name] = self.drum(name, task)
         return results
-    
+
     def gong_all(self) -> Dict[str, str]:
         """
-        Send gong signal (鸣金) to all agents.
-        
+        鸣金 — 让所有将领停止
+
         Returns:
-            Dict[str, str]: Results from each agent.
+            Dict[str, str]: 每个将领的停止结果
         """
         results = {}
         for name in self.agents:
             results[name] = self.gong(name)
         return results
+
+    # ========== 智能调度 (点兵台) ==========
+
+    def assess_task(self, task: str):
+        """
+        评估任务 — 分析复杂度、所需能力、敌方战力
+
+        Args:
+            task: 任务描述
+
+        Returns:
+            TaskAssessment 评估结果
+        """
+        if self.commander:
+            return self.commander.assess_task(task)
+        # 无 Commander 时直接创建评估器
+        from bingfu.assessment import TaskAssessor
+        from bingfu.llm.config import LLMConfig, LLMManager
+        assessor = TaskAssessor(llm_provider=self.default_llm)
+        return assessor.assess(task)
+
+    def match_task(self, task: str):
+        """
+        点兵 — 评估任务并为所有将领评分排序
+
+        Args:
+            task: 任务描述
+
+        Returns:
+            List[MatchResult] 按评分降序排列的匹配结果
+        """
+        if self.commander:
+            return self.commander.match_task(task)
+        # 无 Commander 时直接创建匹配器
+        from bingfu.matcher import TaskMatcher
+        matcher = TaskMatcher(assessor=self.assess_task.__self__
+                             if hasattr(self, '_assessor') else None)
+        return matcher.match(task, self.agents)
+
+    def smart_drum(self, task: str) -> str:
+        """
+        智能击鼓 — 自动选择最适合的将领执行任务
+
+        Args:
+            task: 任务描述
+
+        Returns:
+            str: 执行结果（包含派兵理由）
+        """
+        if self.commander:
+            return self.commander.smart_drum(task)
+        # 无 Commander 时直接用匹配器
+        from bingfu.matcher import TaskMatcher
+        assessment = self.assess_task(task)
+        matcher = TaskMatcher()
+        results = matcher.match(task, self.agents)
+        if not results:
+            return "❌ 无可用将领"
+        best = results[0]
+        agent = self.agents.get(best.agent_name)
+        if not agent:
+            return "❌ 未找到将领"
+        header = (
+            f"📋 任务评估：{assessment.complexity.value}({assessment.complexity_score}/10)\n"
+            f"⚔️  敌方战力：≈{assessment.enemy_power}\n"
+            f"🎖️  推荐将领：{best.agent_name}（{best.total_score:.2f}分）\n"
+            f"📝 派兵理由：{best.reasoning}\n\n🥁 开始执行..."
+        )
+        try:
+            result = agent.drum(task)
+            return f"{header}\n\n📋 执行结果：\n{result}"
+        except Exception as e:
+            return f"{header}\n\n❌ 执行失败: {e}"
     
     # ========== Commander Operations (指挥操作) ==========
     

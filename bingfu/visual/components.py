@@ -131,11 +131,11 @@ class GeneralCard(tk.Frame):
         if self.message:
             msg_label = tk.Label(
                 content,
-                text=self.message[:30] + ("..." if len(self.message) > 30 else ""),
+                text=self.message[:60] + ("..." if len(self.message) > 60 else ""),
                 font=FONTS["small"],
                 bg=COLORS["bg_light"],
                 fg=COLORS["text_muted"],
-                wraplength=150
+                wraplength=200
             )
             msg_label.pack(anchor="w", pady=(5, 0))
 
@@ -347,7 +347,7 @@ class ReportPanel(tk.Frame):
 
         tk.Label(
             report,
-            text=content[:50] + ("..." if len(content) > 50 else ""),
+            text=content[:100] + ("..." if len(content) > 100 else ""),
             font=FONTS["small"],
             bg=COLORS["bg_light"],
             fg=COLORS["text_muted"]
@@ -394,7 +394,7 @@ class ReportPanel(tk.Frame):
 
         tk.Label(
             report,
-            text=report_data["content"][:50] + ("..." if len(report_data["content"]) > 50 else ""),
+            text=report_data["content"][:100] + ("..." if len(report_data["content"]) > 100 else ""),
             font=FONTS["small"],
             bg=COLORS["bg_light"],
             fg=COLORS["text_muted"]
@@ -419,7 +419,7 @@ class StatsBar(tk.Frame):
         """构建状态栏UI"""
         self.configure(
             bg=COLORS["gold_dark"],
-            height=40,
+            height=45,
             relief="groove",
             bd=2
         )
@@ -428,7 +428,7 @@ class StatsBar(tk.Frame):
         self.inner_frame = tk.Frame(self, bg=COLORS["gold_dark"])
         self.inner_frame.pack(fill="both", expand=True, padx=20, pady=5)
 
-        # 默认统计项
+        # 默认统计项（增大间距，给数字足够显示空间）
         self._stat_labels = {}
         default_stats = [
             ("generals", "在线将领", "0"),
@@ -438,15 +438,19 @@ class StatsBar(tk.Frame):
         ]
 
         for key, label_text, default_value in default_stats:
-            stat_frame = tk.Frame(self.inner_frame, bg=COLORS["gold_dark"])
-            stat_frame.pack(side="left", padx=20)
+            # 使用固定宽度 frame 防止数字被截断
+            stat_frame = tk.Frame(self.inner_frame, bg=COLORS["gold_dark"], width=120)
+            stat_frame.pack(side="left", padx=15, pady=2)
+            stat_frame.pack_propagate(False)  # 保持固定宽度
 
             tk.Label(
                 stat_frame,
                 text=label_text,
                 font=FONTS["small"],
                 bg=COLORS["gold_dark"],
-                fg=COLORS["bg_dark"]
+                fg=COLORS["bg_dark"],
+                anchor="center",
+                width=8
             ).pack()
 
             value_label = tk.Label(
@@ -454,7 +458,9 @@ class StatsBar(tk.Frame):
                 text=default_value,
                 font=FONTS["subtitle"],
                 bg=COLORS["gold_dark"],
-                fg=COLORS["bg_dark"]
+                fg=COLORS["bg_dark"],
+                anchor="center",
+                width=8
             )
             value_label.pack()
             self._stat_labels[key] = value_label
@@ -476,7 +482,7 @@ class CommandInput(tk.Frame):
 
     def _build_ui(self):
         """构建输入框UI"""
-        self.configure(bg=COLORS["bg_medium"])
+        self.configure(bg=COLORS["bg_dark"], bd=1, highlightbackground=COLORS["gold_dark"], highlightthickness=1)
 
         # 提示符
         prompt = tk.Label(
@@ -486,7 +492,7 @@ class CommandInput(tk.Frame):
             bg=COLORS["bg_medium"],
             fg=COLORS["gold"]
         )
-        prompt.pack(side="left", padx=(10, 5))
+        prompt.pack(side="left", padx=(10, 5), pady=6)
 
         # 输入框
         self.entry = tk.Entry(
@@ -498,7 +504,7 @@ class CommandInput(tk.Frame):
             relief="flat",
             bd=5
         )
-        self.entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.entry.pack(side="left", fill="x", expand=True, padx=(0, 10), pady=6)
 
         # 绑定回车事件
         self.entry.bind("<Return>", self._handle_submit)
@@ -515,7 +521,7 @@ class CommandInput(tk.Frame):
             cursor="hand2",
             padx=15
         )
-        send_btn.pack(side="right", padx=(0, 10))
+        send_btn.pack(side="right", padx=(0, 10), pady=6)
 
     def _handle_submit(self, event=None):
         """处理提交"""

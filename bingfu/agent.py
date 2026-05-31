@@ -13,6 +13,7 @@ from bingfu.llm.base import (
     LLMProvider, LLMResponse, LLMMessage, ToolDefinition,
     ToolCall, RoleType
 )
+from bingfu.profile import GeneralProfile
 
 
 class Agent(BaseModel):
@@ -31,6 +32,8 @@ class Agent(BaseModel):
     name: str = Field(..., description="Agent 名称（将领名号）")
     role: Optional[str] = Field(default=None, description="Agent 角色/职位")
     description: Optional[str] = Field(default=None, description="Agent 描述")
+    profile: Optional[GeneralProfile] = Field(default=None,
+                                              description="将军战力档案（专长/弱项/战力值）")
 
     # 内部状态 (内部状态)
     is_active: bool = Field(default=False, description="是否在线")
@@ -208,6 +211,18 @@ class Agent(BaseModel):
             prompt += f"，职位「{self.role}」"
         if self.description:
             prompt += f"。{self.description}"
+
+        # 注入战力档案信息
+        if self.profile:
+            p = self.profile
+            prompt += f"\n\n【战力档案】作战风格：{p.style.value}"
+            if p.specialties:
+                prompt += f"\n专长领域：{'、'.join(p.specialties)}"
+            if p.weaknesses:
+                prompt += f"\n弱项领域：{'、'.join(p.weaknesses)}"
+            prompt += f"\n五维战力：{p.stats.summary()}"
+            prompt += f"\n{self.name}应发挥专长、规避弱项，选择最适合的策略执行任务。"
+
         prompt += "。你是一个古代军事风格的智能体，用中文回复，风格简练有力如军令。"
         prompt += "\n\n你可以使用提供的工具来完成任务。思考-行动-观察循环执行，直到给出最终结论。"
         return prompt
@@ -334,6 +349,17 @@ class Agent(BaseModel):
         if not self._conversation:
             return f"将领 {self.name} 暂无对话记录"
         return f"将领 {self.name} 对话轮数: {len(self._conversation)}"
+
+    def get_profile_summary(self) -> str:
+        """获取战力档案摘要（用于 UI 展示）"""
+        if not self.profile:
+            return "无档案"
+        p = self.profile
+        return (
+            f"{p.style.value} | "
+            f"专长: {'、'.join(p.specialties[:2])} | "
+            f"战力: {p.stats.summary()}"
+        )
 
     def __str__(self) -> str:
         status = "🟢 Active" if self.is_active else "⚫ Inactive"

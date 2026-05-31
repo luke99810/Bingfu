@@ -21,7 +21,7 @@ COLORS = {
     # 文字色
     "text_primary": "#F5F5DC",       # 米白色主文字
     "text_secondary": "#C0C0C0",    # 灰色次要文字
-    "text_muted": "#808080",        # 暗灰色
+    "text_muted": "#A8A8B8",        # 浅灰蓝 — 提升深色背景对比度
 
     # 状态色
     "status_online": "#50C878",     # 在线绿
@@ -37,10 +37,10 @@ COLORS = {
 # 字体配置
 FONTS = {
     "title": ("Microsoft YaHei UI", 18, "bold"),       # 标题字体
-    "subtitle": ("Microsoft YaHei UI", 14, "bold"),   # 副标题
-    "body": ("Microsoft YaHei UI", 10),               # 正文
-    "mono": ("Consolas", 10),                          # 等宽字体
-    "small": ("Microsoft YaHei UI", 9),               # 小字
+    "subtitle": ("Microsoft YaHei UI", 13, "bold"),   # 副标题
+    "body": ("Microsoft YaHei UI", 11),               # 正文
+    "mono": ("Consolas", 11),                          # 等宽字体
+    "small": ("Microsoft YaHei UI", 10),               # 小字
 }
 
 # 边框样式

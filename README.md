@@ -25,6 +25,7 @@ The framework is designed to be simple, extensible, and fun, with a nod to Chine
 - **Tactics Engine**: Built‑in Sun Tzu's Art of War strategy support
 - **Famous Generals**: Pre‑built agents inspired by legendary Chinese generals
 - **Visualization**: Desktop console (MilitaryCommandConsole) with ancient military style
+- **LangChain Integration**: Support for LangChain agents, memory, and RAG retrieval
 
 ## 📦 Installation
 
@@ -177,6 +178,42 @@ advice = sunbin.analyze_battlefield(context)
 print(f"Sun Tzu's Advice: {advice['recommended_tactic']['strategy']}")
 ```
 
+### LangChain Integration
+
+BingFu v0.6.0 introduces LangChain integration for enhanced agent capabilities:
+
+```python
+from bingfu import LangChainAgent, LangChainMemory, RAGRetriever
+
+# 1. Create LangChain Agent with multiple memory modes
+agent = LangChainAgent(
+    name="Zhuge Liang",
+    role="Strategist",
+    description="Master of strategy and tactics",
+    memory_type="summary"  # buffer, summary, window, or vector
+)
+
+# 2. Create RAG Retriever for retrieval-augmented generation
+retriever = RAGRetriever(
+    embedding_model="text-embedding-3-small",
+    vector_store_type="faiss"  # faiss or chroma
+)
+
+# Add documents to RAG
+retriever.add_documents([
+    "Sun Tzu's Art of War has 13 chapters.",
+    "The supreme art of war is to subdue the enemy without fighting."
+])
+
+# 3. Use RAG for knowledge-enhanced queries
+results = retriever.similarity_search("What is the best strategy?", k=3)
+
+# 4. Combine Agent with RAG
+agent.use_rag = True
+agent.rag_retriever = retriever
+result = agent.run_with_rag("What does Sun Tzu say about strategy?")
+```
+
 ### Visualization - Military Command Console
 
 ```python
@@ -223,6 +260,7 @@ All examples are in the `examples/` directory:
 | `famous_generals.py` | Ancient Chinese generals (Han Xin, Bai Qi, etc.) |
 | `cli_guide.py` | CLI usage guide |
 | `console_demo.py` | Military command console demo |
+| `langchain_usage.py` | LangChain integration examples (Agent, Memory, RAG) |
 
 Run examples:
 
@@ -253,6 +291,11 @@ bingfu-framework/
 │   ├── tactics.py           # Sun Tzu tactics engine
 │   ├── bingfu.py            # Main BingFu class
 │   ├── cli.py               # Command-line interface
+│   ├── langchain_integration.py  # LangChain integration
+│   ├── llm/                 # LLM providers
+│   │   ├── base.py          # Base LLM provider
+│   │   ├── openai_provider.py
+│   │   └── factory.py       # LLM factory
 │   └── visual/              # Visualization module
 │       ├── styles.py        # Style constants
 │       ├── components.py    # UI components
@@ -640,6 +683,7 @@ bingfu-framework/
 | 扩展示例 | ✅ 完成 |
 | 单元测试 | ✅ 完成 |
 | 可视化控制台 | ✅ 完成 |
+| LangChain集成 (Agent/Memory/RAG) | ✅ 完成 |
 | Web版本 | 🔜 未来版本 |
 
 ## 📄 License

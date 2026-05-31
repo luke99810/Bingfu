@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bingfu"
-version = "0.4.0"
+version = "0.5.0"
 authors = [
     { name = "SuXin (州哥)", email = "luke99810@example.com" },
 ]
-description = "BingFu: A lightweight multi-agent framework inspired by ancient Chinese warfare, with LLM integration for intelligent task execution."
+description = "兵符 BingFu: 轻量级多智能体框架，支持将军战力体系 + 智能派兵 + LLM 接入"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",

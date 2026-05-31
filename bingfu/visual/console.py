@@ -111,16 +111,45 @@ class MilitaryCommandConsole:
         # 标题栏
         self._create_title_bar()
 
-        # 主内容区 - 使用PanedWindow实现可调节布局
-        main_paned = tk.PanedWindow(
+        # ══════════════════════════════════════════════
+        # 底部固定元素 — 先 pack 确保始终可见
+        # ══════════════════════════════════════════════
+
+        # 底部状态栏（最底部）
+        self.stats_bar = StatsBar(self._root)
+        self.stats_bar.pack(side="bottom", fill="x")
+
+        # 命令输入区（军令输入框）
+        self.command_input = CommandInput(
             self._root,
+            on_submit=self._handle_command
+        )
+        self.command_input.pack(side="bottom", fill="x", pady=(0, 5))
+
+        # ══════════════════════════════════════════════
+        # 可拖拽分割区 — 主内容(上) + 日志区(下)
+        # ══════════════════════════════════════════════
+
+        v_paned = tk.PanedWindow(
+            self._root,
+            orient="vertical",
+            bg=COLORS["bg_dark"],
+            sashrelief="groove",
+            sashwidth=4,
+            handlesize=8
+        )
+        v_paned.pack(fill="both", expand=True)
+
+        # 上半部分：三栏主内容区
+        main_paned = tk.PanedWindow(
+            v_paned,
             bg=COLORS["bg_dark"],
             sashrelief="groove",
             sashwidth=5,
             handlesize=10,
             handlepad=5
         )
-        main_paned.pack(fill="both", expand=True)
+        v_paned.add(main_paned, height=420)
 
         # 左侧面板 - 将领名录
         left_panel = self._create_left_panel(main_paned)
@@ -134,29 +163,36 @@ class MilitaryCommandConsole:
         right_panel = self._create_right_panel(main_paned)
         main_paned.add(right_panel)
 
-        # 底部状态栏
-        self.stats_bar = StatsBar(self._root)
-        self.stats_bar.pack(side="bottom", fill="x")
+        # 下半部分：日志输出区（可拖拽调整高度）
+        log_container = tk.Frame(v_paned, bg=COLORS["bg_dark"])
+        v_paned.add(log_container, height=220)
 
-        # 命令输入区
-        self.command_input = CommandInput(
-            self._root,
-            on_submit=self._handle_command
-        )
-        self.command_input.pack(side="bottom", fill="x", pady=(0, 5))
+        # 日志标题栏
+        log_header = tk.Frame(log_container, bg=COLORS["bg_medium"], height=28)
+        log_header.pack(fill="x", padx=5, pady=(2, 0))
+        log_header.pack_propagate(False)
 
-        # 日志输出区
+        tk.Label(
+            log_header,
+            text=f"  {ICONS['report']} 战报传回",
+            font=FONTS["small"],
+            bg=COLORS["bg_medium"],
+            fg=COLORS["gold"],
+            anchor="w"
+        ).pack(side="left", padx=5, pady=3)
+
+        # 日志滚动文本框
         self.log_area = scrolledtext.ScrolledText(
-            self._root,
-            height=8,
+            log_container,
             font=FONTS["mono"],
             bg=COLORS["bg_dark"],
             fg=COLORS["text_primary"],
             insertbackground=COLORS["gold"],
             relief="flat",
-            state="disabled"
+            state="disabled",
+            wrap="word"
         )
-        self.log_area.pack(side="bottom", fill="x", padx=5, pady=(0, 5))
+        self.log_area.pack(fill="both", expand=True, padx=5, pady=(2, 5))
 
         # 初始化日志
         self._log("系统启动中...")
@@ -431,12 +467,13 @@ class MilitaryCommandConsole:
         online = sum(1 for g in self.generals.values() if g["status"] == "online")
         busy = sum(1 for g in self.generals.values() if g["status"] == "busy")
         total = len(self.generals)
+        completed_pct = int(busy / total * 100) if total > 0 else 0
 
         self.stats_bar.update(
-            generals=f"{online}",
-            tasks=f"{total}",
-            completed=f"{int(busy/total*100) if total > 0 else 0}%",
-            running=f"{busy}"
+            generals=f"{online}人",
+            tasks=f"{total}个",
+            completed=f"{completed_pct}%",
+            running=f"{busy}个"
         )
 
     def _log(self, message: str, level: str = "info"):
@@ -481,6 +518,10 @@ class MilitaryCommandConsole:
                 self.add_report(parts[0], parts[1])
         elif command.startswith("/battle "):
             self._cmd_update_battle(command[8:])
+        elif command.startswith("/match "):
+            self._cmd_match(command[8:])
+        elif command.startswith("/smart "):
+            self._cmd_smart(command[7:])
         elif command == "/clear":
             self.log_area.config(state="normal")
             self.log_area.delete("1.0", "end")
@@ -544,7 +585,7 @@ class MilitaryCommandConsole:
                     LLMMessage(role=RoleType.SYSTEM, content=system_prompt),
                     LLMMessage(role=RoleType.USER, content=text),
                 ]
-                response = self.llm_provider.generate(messages, temperature=0.3, max_tokens=512)
+                response = self.llm_provider.generate(messages, temperature=0.3, max_tokens=2048)
                 content = response.content or ""
 
                 # 解析 JSON
@@ -593,7 +634,12 @@ class MilitaryCommandConsole:
                 lines.append("已注册 Agent：")
                 for name, agent in self.bingfu_instance.agents.items():
                     has_llm = "🧠" if hasattr(agent, 'llm') and agent.llm else "⚠️"
-                    lines.append(f"  - {has_llm} {name} ({agent.role or '无角色'})")
+                    profile_info = ""
+                    if hasattr(agent, 'get_profile_summary'):
+                        ps = agent.get_profile_summary()
+                        if ps and ps != "无档案":
+                            profile_info = f" | {ps}"
+                    lines.append(f"  - {has_llm} {name} ({agent.role or '无角色'}){profile_info}")
 
         return "\n".join(lines)
 
@@ -663,7 +709,12 @@ class MilitaryCommandConsole:
                         def _exec():
                             try:
                                 result = agent.drum(task)
-                                self._root.after(0, lambda: self._log(f"📋 {agent_name} 回报：{result[:200]}"))
+                                # 分段输出完整结果（每段不超过500字符，自动换行）
+                                def _show_result(res):
+                                    for i in range(0, len(res), 500):
+                                        chunk = res[i:i+500]
+                                        self._root.after(0, lambda c=chunk: self._log(f"📋 {agent_name} 回报：\n{c}"))
+                                _show_result(result)
                             except Exception as e:
                                 self._root.after(0, lambda: self._log(f"❌ {agent_name} 执行失败：{e}"))
                         threading.Thread(target=_exec, daemon=True).start()
@@ -703,6 +754,25 @@ class MilitaryCommandConsole:
         elif act == "help":
             self._show_help_natural()
 
+        elif act == "smart_assign":
+            # 智能派兵 — 自动评估任务并选择最优将领
+            task = action.get("task", original_text)
+            if not task:
+                self._log("❌ 请提供任务描述")
+                return
+            self._log(f"🧮 正在分析任务并点兵：{task[:50]}...")
+            # 在新线程执行
+            def _smart():
+                try:
+                    if self.bingfu_instance and hasattr(self.bingfu_instance, 'smart_drum'):
+                        result = self.bingfu_instance.smart_drum(task)
+                        self._root.after(0, lambda: self._log(f"\n{result}"))
+                    else:
+                        self._root.after(0, lambda: self._log("❌ 框架不支持智能派兵"))
+                except Exception as e:
+                    self._root.after(0, lambda: self._log(f"❌ 智能派兵失败: {e}"))
+            threading.Thread(target=_smart, daemon=True).start()
+
         elif act == "chat":
             # 自由对话，用 LLM 回复
             message = action.get("message", original_text)
@@ -714,8 +784,15 @@ class MilitaryCommandConsole:
                             LLMMessage(role=RoleType.SYSTEM, content="你是兵符框架的军师，用古代军事风格简短回复。"),
                             LLMMessage(role=RoleType.USER, content=message),
                         ]
-                        resp = self.llm_provider.generate(msgs, temperature=0.8, max_tokens=256)
-                        self._root.after(0, lambda: self._log(f"💬 军师曰：{resp.content}"))
+                        resp = self.llm_provider.generate(msgs, temperature=0.8, max_tokens=1024)
+                        content = resp.content or ""
+                        # 完整输出，支持分段
+                        def _show_chat(res):
+                            for i in range(0, len(res), 500):
+                                chunk = res[i:i+500]
+                                prefix = "💬 军师曰：" if i == 0 else "    "
+                                self._root.after(0, lambda c=chunk, p=prefix: self._log(f"{p}{c}"))
+                        _show_chat(content)
                     except Exception as e:
                         self._root.after(0, lambda: self._log(f"❌ 军师回复失败：{e}"))
                 threading.Thread(target=_chat, daemon=True).start()
@@ -865,27 +942,75 @@ class MilitaryCommandConsole:
             except ValueError:
                 self._log("格式错误: /battle 己方兵力 敌方兵力 [策略]")
 
+    def _cmd_match(self, task: str):
+        """点兵命令 — 展示所有将军的匹配评分"""
+        if not task.strip():
+            self._log("用法: /match <任务描述>")
+            return
+        self._log(f"🧮 正在分析任务：{task[:50]}...")
+        # 在新线程执行
+        def _do_match():
+            try:
+                if self.bingfu_instance and hasattr(self.bingfu_instance, 'match_task'):
+                    results = self.bingfu_instance.match_task(task)
+                    if not results:
+                        self._root.after(0, lambda: self._log("❌ 无可用将领"))
+                        return
+                    lines = ["\n📊 点兵结果：", "─" * 50]
+                    for r in results:
+                        lines.append(f"  {r.recommendation()}")
+                    lines.append("─" * 50)
+                    self._root.after(0, lambda: self._log("\n".join(lines)))
+                else:
+                    self._root.after(0, lambda: self._log("❌ 框架不支持点兵功能"))
+            except Exception as e:
+                self._root.after(0, lambda: self._log(f"❌ 点兵失败: {e}"))
+        threading.Thread(target=_do_match, daemon=True).start()
+
+    def _cmd_smart(self, task: str):
+        """智能派兵命令 — 自动选最优将领执行"""
+        if not task.strip():
+            self._log("用法: /smart <任务描述>")
+            return
+        self._log(f"🥁 智能派兵中：{task[:50]}...")
+        def _do_smart():
+            try:
+                if self.bingfu_instance and hasattr(self.bingfu_instance, 'smart_drum'):
+                    result = self.bingfu_instance.smart_drum(task)
+                    self._root.after(0, lambda: self._log(f"\n{result}"))
+                else:
+                    self._root.after(0, lambda: self._log("❌ 框架不支持智能派兵"))
+            except Exception as e:
+                self._root.after(0, lambda: self._log(f"❌ 智能派兵失败: {e}"))
+        threading.Thread(target=_do_smart, daemon=True).start()
+
     def _show_help(self):
         """显示帮助"""
         help_text = """
-╔════════════════════════════════════════════╗
-║  兵符 · 中军帐 命令帮助                       ║
-╠════════════════════════════════════════════╣
-║  /add <将领> [状态] [角色]                   ║
-║      添加将领 (状态: online/busy/idle/offline)║
-║                                             ║
-║  /remove <将领>                              ║
-║      移除将领                                ║
-║                                             ║
-║  /report <标题> <内容>                       ║
-║      添加军情报告                            ║
-║                                             ║
-║  /battle <己方> <敌方> [策略]                ║
-║      更新战役态势                            ║
-║                                             ║
-║  /clear                                      ║
-║      清空日志                                ║
-╚════════════════════════════════════════════╝
+╔════════════════════════════════════════════════════╗
+║  兵符 · 中军帐 命令帮助                               ║
+╠════════════════════════════════════════════════════╣
+║  /add <将领> [状态] [角色]                           ║
+║      添加将领 (状态: online/busy/idle/offline)        ║
+║                                                     ║
+║  /remove <将领>                                      ║
+║      移除将领                                        ║
+║                                                     ║
+║  /report <标题> <内容>                               ║
+║      添加军情报告                                    ║
+║                                                     ║
+║  /battle <己方> <敌方> [策略]                        ║
+║      更新战役态势                                    ║
+║                                                     ║
+║  /match <任务描述>                                    ║
+║      点兵 — 评估任务并展示所有将领匹配评分             ║
+║                                                     ║
+║  /smart <任务描述>                                    ║
+║      智能派兵 — 自动选最优将领执行任务                ║
+║                                                     ║
+║  /clear                                              ║
+║      清空日志                                        ║
+╚════════════════════════════════════════════════════╝
 """
         self.log_area.config(state="normal")
         self.log_area.insert("end", help_text)
@@ -895,23 +1020,28 @@ class MilitaryCommandConsole:
     def _show_help_natural(self):
         """显示自然语言帮助"""
         help_text = """
-╔════════════════════════════════════════════════╗
-║  兵符 · 中军帐 自然语言指令说明                     ║
-╠════════════════════════════════════════════════╣
-║  【查询类】                                       ║
-║  统计我军将士数量 / 有哪些将领 / 点兵               ║
-║  目前战况如何 / 当前态势 / 战场形势                  ║
-║  有何军情 / 战报 / 情报                            ║
-║                                                 ║
-║  【操作类】                                       ║
-║  添加将领 张辽 online 前锋                         ║
-║  移除将领 张辽                                    ║
-║  全军出击 / 出击 / 进攻                            ║
-║  清空日志 / 清屏                                  ║
-║  更新战役 我军30000 敌军80000 「以逸待劳」           ║
-║                                                 ║
-║  【斜杠命令】输入 /help 查看                        ║
-╚════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════╗
+║  兵符 · 中军帐 自然语言指令说明                         ║
+╠══════════════════════════════════════════════════════╣
+║  【查询类】                                           ║
+║  统计我军将士数量 / 有哪些将领 / 点兵                     ║
+║  目前战况如何 / 当前态势 / 战场形势                        ║
+║  有何军情 / 战报 / 情报                               ║
+║                                                     ║
+║  【操作类】                                           ║
+║  添加将领 张辽 online 前锋                             ║
+║  移除将领 张辽                                        ║
+║  全军出击 / 出击 / 进攻                               ║
+║  清空日志 / 清屏                                      ║
+║  更新战役 我军30000 敌军80000 「以逸待劳」               ║
+║                                                     ║
+║  【智能派兵】                                         ║
+║  /match 分析这份数据报告                               ║
+║  /smart 设计一个用户登录系统                           ║
+║  让系统自动选择合适的将领（LLM理解后自动调用smart_assign）║
+║                                                     ║
+║  【斜杠命令】输入 /help 查看                           ║
+╚══════════════════════════════════════════════════════╝
 """
         self.log_area.config(state="normal")
         self.log_area.insert("end", help_text)
