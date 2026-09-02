@@ -4,6 +4,11 @@ Demonstrates multi‑agent coordination using the Commander.
 Inspired by ancient Chinese warfare: 多路出兵 (multiple forces attacking).
 """
 
+# ★ 让这个示例在**未安装包**的情况下也能直接跑（见 _bootstrap.py）。
+#   没有这一行，clone 下来第一条 `python examples/xxx.py` 就是
+#   ModuleNotFoundError —— 六个示例此前无一例外。
+import _bootstrap  # noqa: F401
+
 from bingfu import BingFu, Agent
 from bingfu.commander import Commander
 

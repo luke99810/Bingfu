@@ -15,44 +15,66 @@ import os
 
 # Try to import LangChain dependencies
 _LANGCHAIN_AVAILABLE = False
+
+#: 导入失败的具体原因。
+#:
+#: ★ 这一行是为了让「装了却用不了」这件事说得出话来。
+#:
+#:   下面那个 try 覆盖十几个子导入。原来失败时是 `except ImportError: pass`，
+#:   于是无论缺的是 langchain 本身、还是 langchain-classic 换了模块路径、
+#:   还是 faiss 没装，外面看到的都是同一句「LangChain is not installed」——
+#:   一个已经 pip install 过的人拿着这句话无从下手。
+_LANGCHAIN_IMPORT_ERROR = ""
 try:
     from dotenv import load_dotenv
     from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-    from langchain.chains import LLMChain, RetrievalQA
-    from langchain.memory import (
+    from langchain_classic.chains import LLMChain, RetrievalQA
+    from langchain_classic.memory import (
         ConversationBufferMemory,
         ConversationSummaryMemory,
         ConversationBufferWindowMemory,
         VectorStoreRetrieverMemory,
     )
-    from langchain.prompts import (
+    from langchain_classic.prompts import (
         ChatPromptTemplate,
         SystemMessagePromptTemplate,
         HumanMessagePromptTemplate,
         MessagesPlaceholder,
     )
-    from langchain.schema import (
+    from langchain_classic.schema import (
         AIMessage,
         HumanMessage,
         SystemMessage,
         BaseMessage,
     )
-    from langchain.tools import BaseTool, StructuredTool, Tool
-    from langchain.agents import (
+    from langchain_classic.tools import BaseTool, StructuredTool, Tool
+    from langchain_classic.agents import (
         initialize_agent,
         AgentType,
         Tool as AgentTool,
     )
-    from langchain.document_loaders import TextLoader, DirectoryLoader
-    from langchain.text_splitter import CharacterTextSplitter, RecursiveCharacterTextSplitter
-    from langchain.vectorstores import FAISS, Chroma
+    from langchain_community.document_loaders import TextLoader, DirectoryLoader
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from langchain_community.vectorstores import FAISS, Chroma
     from langchain_core.output_parsers import StrOutputParser
+    
+    # CharacterTextSplitter is deprecated but may still be needed by some code
+    try:
+        from langchain_text_splitters import CharacterTextSplitter
+    except ImportError:
+        CharacterTextSplitter = RecursiveCharacterTextSplitter  # fallback
     
     # Load environment variables
     load_dotenv()
     _LANGCHAIN_AVAILABLE = True
-except ImportError:
-    pass
+except ImportError as exc:
+    _LANGCHAIN_IMPORT_ERROR = str(exc)
+
+
+def langchain_status():
+    """返回 (是否可用, 不可用时的具体原因)。"""
+
+    return _LANGCHAIN_AVAILABLE, _LANGCHAIN_IMPORT_ERROR
 
 
 class LangChainMemory(BaseModel):
@@ -83,8 +105,9 @@ class LangChainMemory(BaseModel):
         """创建LangChain记忆实例"""
         if not _LANGCHAIN_AVAILABLE:
             raise ImportError(
-                "LangChain is not installed. "
-                "Install with: pip install langchain langchain-openai langchain-community"
+                "LangChain 不可用：%s。 "
+                "安装：pip install 'bingfu[langchain,rag]'"
+                % (_LANGCHAIN_IMPORT_ERROR or "未安装")
             )
         
         if self.memory_type == "buffer":
@@ -162,14 +185,66 @@ class RAGRetriever(BaseModel):
         arbitrary_types_allowed = True
 
     def _init_embeddings(self):
-        """初始化嵌入模型"""
+        """初始化嵌入模型 — 支持OpenAI/DeepSeek/本地HuggingFace回退"""
         if not _LANGCHAIN_AVAILABLE:
             raise ImportError(
-                "LangChain is not installed. "
-                "Install with: pip install langchain langchain-openai langchain-community"
+                "LangChain 不可用：%s。 "
+                "安装：pip install 'bingfu[langchain,rag]'"
+                % (_LANGCHAIN_IMPORT_ERROR or "未安装")
             )
         
-        self._embeddings = OpenAIEmbeddings(model=self.embedding_model)
+        # 尝试OpenAI embeddings（需要OPENAI_API_KEY）
+        #
+        # ★ 这个探测必须带超时，且不能重试。
+        #
+        #   原来是裸的 OpenAIEmbeddings(...) + embed_query("test")，
+        #   靠 `except Exception` 兜底往下走。但 except 拦得住**报错**，
+        #   拦不住**卡住** —— 环境里若设了 OPENAI_BASE_URL 指向一个
+        #   不支持 embeddings 或干脆没响应的中转端点，SDK 会带着默认
+        #   重试一直等下去。实测这里挂了整整十分钟才被强杀，
+        #   而后面两级本地回退一次都没轮到。
+        #
+        #   一个「失败了会自动降级」的链条，只在失败能被**及时判定**时才成立。
+        try:
+            self._embeddings = OpenAIEmbeddings(
+                model=self.embedding_model,
+                timeout=8.0,
+                max_retries=0,
+            )
+            # 快速验证是否可用
+            _ = self._embeddings.embed_query("test")
+            return
+        except Exception:
+            self._embeddings = None
+        
+        # 回退1: 本地HuggingFace模型
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+            self._embeddings = HuggingFaceEmbeddings(
+                model_name="all-MiniLM-L6-v2",
+                model_kwargs={'device': 'cpu'}
+            )
+            return
+        except ImportError:
+            pass
+        
+        # 回退2: langchain_community (deprecated but still works)
+        try:
+            from langchain_community.embeddings import HuggingFaceEmbeddings
+            self._embeddings = HuggingFaceEmbeddings(
+                model_name="all-MiniLM-L6-v2",
+                model_kwargs={'device': 'cpu'}
+            )
+            return
+        except Exception:
+            pass
+        
+        raise RuntimeError(
+            "无可用的embedding模型！请选择以下任一方案：\n"
+            "  1. 设置 OPENAI_API_KEY 使用 OpenAI embeddings\n"
+            "  2. pip install langchain-huggingface 使用本地模型\n"
+            "  3. pip install sentence-transformers 使用本地模型"
+        )
 
     def _init_vector_store(self):
         """初始化向量存储"""
@@ -315,18 +390,30 @@ class LangChainAgent(BaseModel):
         arbitrary_types_allowed = True
 
     def _init_llm(self):
-        """初始化LLM"""
+        """初始化LLM — 支持DeepSeek和OpenAI"""
         if not _LANGCHAIN_AVAILABLE:
             raise ImportError(
-                "LangChain is not installed. "
-                "Install with: pip install langchain langchain-openai langchain-community"
+                "LangChain 不可用：%s。 "
+                "安装：pip install 'bingfu[langchain,rag]'"
+                % (_LANGCHAIN_IMPORT_ERROR or "未安装")
             )
         
-        self._llm = ChatOpenAI(
+        # 检测DeepSeek模型并设置对应base_url
+        model_lower = self.llm_model.lower()
+        is_deepseek = "deepseek" in model_lower
+        
+        kwargs = dict(
             model=self.llm_model,
             temperature=self.temperature,
-            openai_api_key=os.getenv("OPENAI_API_KEY")
         )
+        
+        if is_deepseek:
+            kwargs["openai_api_key"] = os.getenv("DEEPSEEK_API_KEY", os.getenv("OPENAI_API_KEY"))
+            kwargs["openai_api_base"] = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        else:
+            kwargs["openai_api_key"] = os.getenv("OPENAI_API_KEY")
+        
+        self._llm = ChatOpenAI(**kwargs)
 
     def _init_memory(self):
         """初始化记忆"""
@@ -385,7 +472,7 @@ class LangChainAgent(BaseModel):
         # 创建系统提示模板
         system_prompt = self._build_system_prompt()
         
-        # 初始化Agent
+        # 初始化Agent (LangChain v1.x expects string, not SystemMessage object)
         self._agent = initialize_agent(
             self._tools,
             self._llm,
@@ -393,7 +480,7 @@ class LangChainAgent(BaseModel):
             memory=self._memory,
             verbose=True,
             agent_kwargs={
-                "system_message": SystemMessage(content=system_prompt)
+                "system_message": system_prompt
             }
         )
 

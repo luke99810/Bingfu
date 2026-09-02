@@ -77,3 +77,15 @@ logs/
 !requirements.txt
 !config.yaml
 !config.example.yaml
+
+# Environment secrets
+.env
+
+# === 开源版额外排除 ===
+# 原始评测结果:完整测评过程与报告将陆续公开,暂不随代码发布
+bench/data/*.json
+# 运行产物与工作区
+.bingfu/
+ws_*/
+runs/
+outputs/

@@ -6,6 +6,11 @@ BingFu 中军帐可视化示例
     python examples/console_demo.py
 """
 
+# ★ 让这个示例在**未安装包**的情况下也能直接跑（见 _bootstrap.py）。
+#   没有这一行，clone 下来第一条 `python examples/xxx.py` 就是
+#   ModuleNotFoundError —— 六个示例此前无一例外。
+import _bootstrap  # noqa: F401
+
 from bingfu.visual import MilitaryCommandConsole
 from bingfu.visual.styles import COLORS
 import time

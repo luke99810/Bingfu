@@ -6,6 +6,7 @@ v0.4.0: 新增 LLM 驱动的自然语言理解
 当配置了 LLM Provider 后，自然语言指令将走 LLM 解析而非关键词匹配。
 """
 
+import os
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
 import threading
@@ -13,6 +14,7 @@ import json
 from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 
+from ..i18n import LOCALES, get_locale, set_locale, t as tr
 from .styles import COLORS, FONTS, ICONS
 from .components import (
     GeneralCard, BattleStatusPanel, ReportPanel,
@@ -56,6 +58,7 @@ class MilitaryCommandConsole:
         memory: Optional[Memory] = None,
         llm_provider: Optional[Any] = None,
         bingfu_instance: Optional[Any] = None,
+        checkpointer: Optional[Any] = None,
     ):
         """
         初始化控制台
@@ -76,6 +79,12 @@ class MilitaryCommandConsole:
         self.memory = memory
         self.llm_provider = llm_provider
         self.bingfu_instance = bingfu_instance
+        #: 断点存储；None = 战役崩了只能从头再来
+        self.checkpointer = checkpointer
+
+        # 会标。图像对象要一直被引用着，否则 Tk 会把它显示成空白
+        self._logo_image = None
+        self._logo_error = ""
 
         # 内部状态
         self.generals: Dict[str, Dict] = {}
@@ -89,6 +98,149 @@ class MilitaryCommandConsole:
         # 创建窗口
         self._root: Optional[tk.Tk] = None
         self._create_window()
+
+    #: 会标文件。放在包内 assets/ 下，随包一起走。
+    #:
+    #: ★ 只认这一处，不去若干候选路径里挨个碰运气 ——
+    #:   「好几个地方都可能放着」本身就是故障源：换了其中一处，
+    #:   程序却在用另一处，而两处看起来都是对的。
+    LOGO_PATH = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png"
+    )
+    LOGO_SIZE = 36
+
+    def _bg_rgba(self):
+        """标题栏底色，用于合成会标的透明区。"""
+        h = COLORS["bg_dark"].lstrip("#")
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
+
+    def _load_logo(self, size=None):
+        """把会标读成 Tk 图像；读不到返回 None，并把原因记在 _logo_error。
+
+        ★ 图像对象必须挂在 self 上。
+          Tk 的 PhotoImage 在 Python 侧只要没人引用就会被回收，
+          而 C 层不会报错 —— 标签上留下一块空白，
+          不抛异常、不打日志，只是图没了。这是 tkinter 最经典的坑。
+
+        ★ master 必须显式传 self._root，不能让它去找「默认 root」。
+          默认 root 可能是另一个 Tk 解释器，那样图会被登记在 A 上、
+          标签却属于 B，报错是 image "pyimageN" doesn't exist ——
+          看起来像图坏了，其实是挂错了地方。
+
+        ★ 有 Pillow 走 Pillow（可以任意缩放、能把透明区合成到底色），
+          没有就退回 tk.PhotoImage + subsample。后者只能整数倍降采样、
+          锯齿明显，但它不需要额外依赖 —— 少一个依赖比好看重要。
+        """
+        size = size or self.LOGO_SIZE
+
+        if not os.path.exists(self.LOGO_PATH):
+            self._logo_error = "文件不存在：%s" % self.LOGO_PATH
+            return None
+
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            try:
+                raw = tk.PhotoImage(file=self.LOGO_PATH, master=self._root)
+                n = max(1, raw.width() // size)
+                self._logo_image = raw.subsample(n, n)
+                return self._logo_image
+            except Exception as exc:  # noqa: BLE001
+                self._logo_error = "无 Pillow 且 Tk 读图失败：%s" % exc
+                return None
+
+        try:
+            im = Image.open(self.LOGO_PATH).convert("RGBA")
+            # 透明区合成到标题栏底色，否则缩放后边缘会带一圈黑边
+            bg = Image.new("RGBA", im.size, self._bg_rgba())
+            im = Image.alpha_composite(bg, im).convert("RGB")
+            im = im.resize((size, size), Image.LANCZOS)
+            self._logo_image = ImageTk.PhotoImage(im, master=self._root)
+            return self._logo_image
+        except Exception as exc:  # noqa: BLE001
+            self._logo_error = "%s: %s" % (type(exc).__name__, exc)
+            return None
+
+    # ══════════════════════════════════════════════════════
+    #  语言
+    # ══════════════════════════════════════════════════════
+
+    def toggle_language(self) -> str:
+        """在中英之间切换。返回切换后的语言。"""
+
+        return self.set_language("en" if get_locale() == "zh" else "zh")
+
+    def set_language(self, locale: str) -> str:
+        """切到指定语言并重绘界面。"""
+
+        set_locale(locale)
+        self.title = tr("app.title")
+        self.retranslate()
+        self._log(tr("app.lang_switched"))
+        return locale
+
+    def retranslate(self) -> None:
+        """把界面上所有静态文字重刷一遍。
+
+        ★ 只刷**静态**文字。
+
+          日志区、军情卡片、战略建议里已经产生的内容都是运行时产物 ——
+          它们是模型或战役算出来的东西，翻译它们等于篡改记录。
+          切换语言之后**新产生**的内容才用新语言，
+          这与「历史照原样保留」并不矛盾，反而是诚实的做法。
+
+        ★ 每一处都用 getattr 保护。
+
+          窗口还没建完时也可能被调到（比如启动过程中切了语言），
+          缺一个 widget 不该让整次切换半途而废 ——
+          那会留下一个一半中文一半英文的界面。
+        """
+
+        root = getattr(self, "_root", None)
+        if root is not None:
+            root.title(tr("app.title"))
+
+        pairs = [
+            ("title_label", tr("app.title")),
+            ("subtitle_label", tr("app.subtitle")),
+            ("lang_button", tr("app.lang_button")),
+            ("log_title", f"  {ICONS['report']} {tr('panel.log')}"),
+            ("generals_title", f"  {ICONS['general']} {tr('panel.generals')}  "),
+            ("drum_button", f"{ICONS['drum']} {tr('btn.drum')}"),
+            ("gong_button", f"{ICONS['bell']} {tr('btn.gong')}"),
+        ]
+        for attr, text in pairs:
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.config(text=text)
+                except Exception:       # noqa: BLE001
+                    pass
+
+        frame = getattr(self, "tactics_frame", None)
+        if frame is not None and hasattr(frame, "set_title"):
+            frame.set_title(tr("panel.tactics"))
+
+        # 将领卡片的状态词（待命 / 作战中 …）是界面词汇，要跟着切；
+        # 而将领名号与简介是数据，不翻译 —— 它们来自 self.generals，
+        # 重建时原样带过去。
+        #
+        # ★ 直接重建而不是逐个改：卡片本来就是每次从 self.generals
+        #   全量重建的（_refresh_generals），沿用同一条路比另写一套
+        #   retranslate 少一个会走岔的分支。
+        if hasattr(self, "generals_frame"):
+            try:
+                self._refresh_generals()
+            except Exception:       # noqa: BLE001
+                pass
+
+        for attr in ("battle_panel", "report_panel", "stats_bar", "command_input"):
+            panel = getattr(self, attr, None)
+            if panel is not None and hasattr(panel, "retranslate"):
+                try:
+                    panel.retranslate()
+                except Exception:       # noqa: BLE001
+                    pass
 
     def _create_window(self):
         """创建主窗口"""
@@ -172,14 +324,15 @@ class MilitaryCommandConsole:
         log_header.pack(fill="x", padx=5, pady=(2, 0))
         log_header.pack_propagate(False)
 
-        tk.Label(
+        self.log_title = tk.Label(
             log_header,
-            text=f"  {ICONS['report']} 战报传回",
+            text=f"  {ICONS['report']} {tr('panel.log')}",
             font=FONTS["small"],
             bg=COLORS["bg_medium"],
             fg=COLORS["gold"],
             anchor="w"
-        ).pack(side="left", padx=5, pady=3)
+        )
+        self.log_title.pack(side="left", padx=5, pady=3)
 
         # 日志滚动文本框
         self.log_area = scrolledtext.ScrolledText(
@@ -195,7 +348,7 @@ class MilitaryCommandConsole:
         self.log_area.pack(fill="both", expand=True, padx=5, pady=(2, 5))
 
         # 初始化日志
-        self._log("系统启动中...")
+        self._log(tr("log.booting"))
 
     def _create_title_bar(self):
         """创建标题栏"""
@@ -203,18 +356,38 @@ class MilitaryCommandConsole:
         title_frame.pack(fill="x", pady=(0, 5))
         title_frame.pack_propagate(False)
 
-        # 左侧装饰
-        left_decor = tk.Label(
-            title_frame,
-            text="╔══╗",
-            font=("Consolas", 12),
-            bg=COLORS["bg_dark"],
-            fg=COLORS["gold"]
-        )
-        left_decor.pack(side="left", padx=(20, 5))
+        # 左侧会标
+        #
+        # ★ 读不到图就退回原来的字符装饰，并把原因留到启动日志里说一句。
+        #   静默地少一个会标是最难发现的那类失败：窗口照常起来、
+        #   什么都不报，只是它一直没有 logo —— 而没人分得清
+        #   那是加载失败还是本来就这么设计的。
+        logo = self._load_logo()
+        if logo is not None:
+            left_decor = tk.Label(
+                title_frame,
+                image=logo,
+                bg=COLORS["bg_dark"],
+                bd=0,
+            )
+            left_decor.pack(side="left", padx=(16, 10))
+        else:
+            left_decor = tk.Label(
+                title_frame,
+                text="╔══╗",
+                font=("Consolas", 12),
+                bg=COLORS["bg_dark"],
+                fg=COLORS["gold"]
+            )
+            left_decor.pack(side="left", padx=(20, 5))
 
         # 标题
-        title_label = tk.Label(
+        #
+        # ★ 必须存成 self.title_label：原来是个局部变量，
+        #   建完就没人引用，切换语言时**改不到它** ——
+        #   实机截图里英文界面的正中还挂着「兵符 · 中军帐」，
+        #   而单元测试因为只断言了窗口标题（root.title）没发现。
+        title_label = self.title_label = tk.Label(
             title_frame,
             text=self.title,
             font=FONTS["title"],
@@ -236,12 +409,31 @@ class MilitaryCommandConsole:
         # 副标题
         subtitle_label = tk.Label(
             title_frame,
-            text="Multi-Agent 战役指挥系统",
+            text=tr("app.subtitle"),
             font=FONTS["small"],
             bg=COLORS["bg_dark"],
             fg=COLORS["text_muted"]
         )
+        self.subtitle_label = subtitle_label
         subtitle_label.pack(side="right", padx=(10, 5))
+
+        # 语言开关
+        #
+        # ★ 按钮上显示的是「切过去会变成哪种语言」，不是当前语言。
+        #   中文界面时写 EN、英文界面时写「中」—— 按钮是动作，
+        #   写成当前状态会让人按反。
+        self.lang_button = tk.Button(
+            title_frame,
+            text=tr("app.lang_button"),
+            font=FONTS["small"],
+            bg=COLORS["bg_medium"],
+            fg=COLORS["gold"],
+            activebackground=COLORS["gold_dark"],
+            relief="flat",
+            width=4,
+            command=self.toggle_language,
+        )
+        self.lang_button.pack(side="right", padx=(10, 4))
 
     def _create_left_panel(self, parent) -> tk.Frame:
         """创建左侧面板 - 将领名录"""
@@ -252,13 +444,14 @@ class MilitaryCommandConsole:
         header.pack(fill="x", padx=5, pady=(5, 0))
         header.pack_propagate(False)
 
-        tk.Label(
+        self.generals_title = tk.Label(
             header,
-            text=f"  {ICONS['general']} 将领名录  ",
+            text=f"  {ICONS['general']} {tr('panel.generals')}  ",
             font=FONTS["subtitle"],
             bg=COLORS["gold_dark"],
             fg=COLORS["bg_dark"]
-        ).pack(side="left", pady=5)
+        )
+        self.generals_title.pack(side="left", pady=5)
 
         # 滚动区域
         canvas_frame = tk.Frame(frame, bg=COLORS["bg_dark"])
@@ -286,27 +479,29 @@ class MilitaryCommandConsole:
         btn_frame = tk.Frame(frame, bg=COLORS["bg_dark"])
         btn_frame.pack(fill="x", padx=5, pady=5)
 
-        tk.Button(
+        self.drum_button = tk.Button(
             btn_frame,
-            text=f"{ICONS['drum']} 击鼓",
+            text=f"{ICONS['drum']} {tr('btn.drum')}",
             font=FONTS["body"],
             bg=COLORS["status_online"],
             fg=COLORS["bg_dark"],
             command=self._on_drum,
             relief="flat",
             cursor="hand2"
-        ).pack(side="left", padx=2, expand=True, fill="x")
+        )
+        self.drum_button.pack(side="left", padx=2, expand=True, fill="x")
 
-        tk.Button(
+        self.gong_button = tk.Button(
             btn_frame,
-            text=f"{ICONS['bell']} 鸣金",
+            text=f"{ICONS['bell']} {tr('btn.gong')}",
             font=FONTS["body"],
             bg=COLORS["status_offline"],
             fg=COLORS["bg_dark"],
             command=self._on_bell,
             relief="flat",
             cursor="hand2"
-        ).pack(side="left", padx=2, expand=True, fill="x")
+        )
+        self.gong_button.pack(side="left", padx=2, expand=True, fill="x")
 
         return frame
 
@@ -319,7 +514,8 @@ class MilitaryCommandConsole:
         self.battle_panel.pack(fill="both", expand=True, padx=5, pady=5)
 
         # 战术建议区
-        tactics_frame = StyledFrame(frame, title="孙子兵法 · 战术建议")
+        tactics_frame = self.tactics_frame = StyledFrame(
+            frame, title=tr("panel.tactics"))
         tactics_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
         self.tactics_text = tk.Text(
@@ -370,7 +566,7 @@ class MilitaryCommandConsole:
         }
         self._refresh_generals()
         self._update_stats()
-        self._log(f"将领 {name} 状态更新: {status}")
+        self._log(tr("log.status_update", name=name, status=status))
 
     def remove_general(self, name: str):
         """移除将领"""
@@ -401,15 +597,23 @@ class MilitaryCommandConsole:
             "timestamp": datetime.now()
         })
         self.report_panel.add_report(title, content, report_type)
-        self._log(f"收到军情: {title}", level=report_type)
+        self._log(tr("log.dispatch_in", title=title), level=report_type)
 
     def update_battle_status(
         self,
         own_strength: int,
         enemy_strength: int,
-        strategy: str = ""
+        strategy: Optional[str] = None
     ):
-        """更新战役态势"""
+        """更新战役态势。
+
+        ★ strategy 传 None 表示「仍是默认文案」。
+
+          调用方原本写死一句中文「尚未受领军令」传进来，那会被
+          面板当成**战役算出来的结论**而不再跟随语言 ——
+          实机截图里英文界面的战略栏还挂着那句中文，就是这么来的。
+        """
+
         self.battle_panel.update(own_strength, enemy_strength, strategy)
 
     def add_tactics(self, tactics: str):
@@ -499,7 +703,7 @@ class MilitaryCommandConsole:
         if not command.strip():
             return
 
-        self._log(f"传达军令: {command}")
+        self._log(f'{tr("cmd.received")}: {command}')
 
         # 添加到历史
         self.command_history.append(command)
@@ -522,15 +726,32 @@ class MilitaryCommandConsole:
             self._cmd_match(command[8:])
         elif command.startswith("/smart "):
             self._cmd_smart(command[7:])
+        elif command.startswith("/war "):
+            self._cmd_war(command[5:])
+        elif command.startswith("/lang"):
+            self._cmd_lang(command[5:].strip())
         elif command == "/clear":
             self.log_area.config(state="normal")
             self.log_area.delete("1.0", "end")
             self.log_area.config(state="disabled")
         elif command.startswith("/"):
-            self._log("未知指令，输入 /help 查看斜杠命令帮助")
+            self._log(tr("cmd.unknown"))
         else:
             # 自然语言理解层
             self._handle_natural_language(command)
+
+    def _cmd_lang(self, arg: str):
+        """/lang [zh|en] —— 不带参数时在两种语言之间切换。"""
+
+        arg = (arg or "").strip().lower()
+        if not arg:
+            self.toggle_language()
+            return
+        if arg not in LOCALES:
+            self._log(tr("cmd.lang_unknown"))
+            self._log(tr("cmd.lang_usage"))
+            return
+        self.set_language(arg)
 
     def _handle_natural_language(self, text: str):
         """
@@ -945,7 +1166,7 @@ class MilitaryCommandConsole:
     def _cmd_match(self, task: str):
         """点兵命令 — 展示所有将军的匹配评分"""
         if not task.strip():
-            self._log("用法: /match <任务描述>")
+            self._log(tr("cmd.match_usage"))
             return
         self._log(f"🧮 正在分析任务：{task[:50]}...")
         # 在新线程执行
@@ -984,34 +1205,163 @@ class MilitaryCommandConsole:
                 self._root.after(0, lambda: self._log(f"❌ 智能派兵失败: {e}"))
         threading.Thread(target=_do_smart, daemon=True).start()
 
+    def _cmd_war(self, raw: str):
+        """发号施令 —— 走完整战役流程。
+
+        ★ 与 /smart 的区别不是「更好」，是**可观测**。
+
+          /smart 派一位将领执行并返回一段文本，中间发生了什么看不见。
+          /war 把庙算（敌方战力）、点将（我方战力）、交兵、复命
+          逐段发出来 —— 这个框架的主张是「先量敌我再决定怎么打」，
+          量了不给人看等于没量。
+
+        用法：/war <任务>  或  /war <任务> || <要求>
+        """
+
+        raw = raw.strip()
+        if not raw:
+            self._log(tr("cmd.war_usage"))
+            return
+
+        if "||" in raw:
+            task, requirements = raw.split("||", 1)
+        else:
+            task, requirements = raw, ""
+        task, requirements = task.strip(), requirements.strip()
+
+        if not self.bingfu_instance:
+            self._log("❌ " + tr("cmd.no_framework"))
+            return
+
+        self._log(f"📜 军令：{task[:60]}")
+        if requirements:
+            self._log(f"   要求：{requirements[:60]}")
+
+        icons = {
+            "order": "📜", "assess": "⚔️", "muster": "🎖️", "march": "🥁",
+            "report": "📩", "verdict": "🧭", "advise": "🧠",
+            "done": "🏁", "fail": "❌", "step": "·",
+        }
+
+        def _on_event(ev):
+            icon = icons.get(ev.kind, "·")
+            # ★ 回到主线程再动 UI —— tkinter 不是线程安全的，
+            #   在工作线程里直接改控件会随机崩，而且崩得毫无规律。
+            def _render(_ev=ev, _icon=icon):
+                if _ev.kind == "step":
+                    # ★ 执行中的步骤缩进显示，与阶段事件区分开。
+                    #
+                    #   思考轮次只给一行、不展开细节：单看「第 3 轮」信息量很低，
+                    #   但**轮数在涨而工具调用为零**是「在原地打转」的唯一信号，
+                    #   所以不能不显示。
+                    self._log(f"    {_ev.title}")
+                    if _ev.detail.strip() and (_ev.data or {}).get("step_kind") == "tool":
+                        first = _ev.detail.strip().split("\n")[0]
+                        self._log(f"        {first[:110]}")
+                    return
+            
+                self._log(f"{_icon} {_ev.title}")
+                if _ev.detail:
+                    for line in _ev.detail.strip().split("\n")[:6]:
+                        if line.strip():
+                            self._log(f"      {line[:120]}")
+                # ★ 让状态字段真的反映执行情况。
+                #
+                #   它此前是写死的装饰（白起恒为「作战中」而什么都没做）。
+                #   一个不随实际变化的状态指示器，比没有更糟 ——
+                #   它会让人以为自己看到的是真实情况。
+                d = _ev.data or {}
+                who = d.get("agent") or ""
+                if _ev.kind == "step" and who and who in self.generals:
+                    g = self.generals[who]
+                    if g.get("status") != "busy":
+                        self.add_general(who, "busy", g.get("role", ""),
+                                         "执行中")
+                elif _ev.kind == "report":
+                    name = d.get("agent") or ""
+                    if name and name in self.generals:
+                        g = self.generals[name]
+                        self.add_general(name, "idle", g.get("role", ""), "已复命")
+                elif _ev.kind in ("done", "fail"):
+                    # 收兵：全部转回待命
+                    for name, g in list(self.generals.items()):
+                        if g.get("status") == "busy":
+                            self.add_general(name, "idle", g.get("role", ""),
+                                             "已复命" if _ev.kind == "done" else "已收兵")
+
+                # 敌我战力出来时同步到态势面板
+                if _ev.kind == "verdict":
+                    try:
+                        self.update_battle_status(
+                            int(d.get("our_power", 0)),
+                            int(d.get("enemy_power", 0)),
+                            str(d.get("verdict", "")))
+                    except Exception:
+                        pass
+                if _ev.kind in ("assess", "verdict", "done"):
+                    level = "warning" if _ev.kind == "assess" else "success"
+                    self.add_report(_ev.title[:20], (_ev.detail or "")[:120], level)
+
+                # 战术栏由庙算与点将的**实际产出**填充，不再是四句摆设
+                if _ev.kind == "assess":
+                    self.clear_tactics()
+                    for cap in (d.get("capabilities") or [])[:5]:
+                        self.add_tactics(f"需要能力：{cap}")
+                elif _ev.kind == "muster":
+                    for r in (d.get("ranking") or [])[:3]:
+                        self.add_tactics(f"{r.get('name','')} 匹配 {r.get('score',0)}")
+            self._root.after(0, _render)
+
+        def _run():
+            try:
+                from bingfu.campaign import Campaign
+                camp = Campaign(self.bingfu_instance, on_event=_on_event,
+                                strategist=self.llm_provider,
+                                checkpointer=self.checkpointer)
+                result = camp.run(task, requirements)
+                def _final():
+                    self._log("")
+                    self._log("═" * 46)
+                    for line in result.summary().split("\n"):
+                        self._log(f"  {line}")
+                    if not result.took_action:
+                        # ★ 「产出了文本」与「做了事」必须分开说。
+                        self._log("  ⚠️ 本次未调用任何工具 —— 产出全部来自模型既有知识")
+                    self._log("═" * 46)
+                    if result.output:
+                        self._log("")
+                        self._log(result.output[:3000])
+                self._root.after(0, _final)
+            except Exception as e:
+                self._root.after(0, lambda: self._log(f"❌ 战役失败: {e}"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
     def _show_help(self):
         """显示帮助"""
-        help_text = """
-╔════════════════════════════════════════════════════╗
-║  兵符 · 中军帐 命令帮助                               ║
-╠════════════════════════════════════════════════════╣
-║  /add <将领> [状态] [角色]                           ║
-║      添加将领 (状态: online/busy/idle/offline)        ║
-║                                                     ║
-║  /remove <将领>                                      ║
-║      移除将领                                        ║
-║                                                     ║
-║  /report <标题> <内容>                               ║
-║      添加军情报告                                    ║
-║                                                     ║
-║  /battle <己方> <敌方> [策略]                        ║
-║      更新战役态势                                    ║
-║                                                     ║
-║  /match <任务描述>                                    ║
-║      点兵 — 评估任务并展示所有将领匹配评分             ║
-║                                                     ║
-║  /smart <任务描述>                                    ║
-║      智能派兵 — 自动选最优将领执行任务                ║
-║                                                     ║
-║  /clear                                              ║
-║      清空日志                                        ║
-╚════════════════════════════════════════════════════╝
-"""
+        # ★ 帮助文本按词条拼，不再是一块画好边框的中文常量。
+        #
+        #   原来那块用 ╔═╗ 对齐，宽度是按中文字宽手工数出来的 ——
+        #   换成英文之后每行长度都不一样，框会散掉。
+        #   与其为两种语言各维护一张 ASCII 画，不如不画框。
+        rows = [
+            ("/add <name> [status] [role]", tr("help.add")),
+            ("/remove <name>", tr("help.remove")),
+            ("/report <title> <content>", tr("help.report")),
+            ("/battle <ours> <theirs> [strategy]", tr("help.battle")),
+            ("/match <task>", tr("help.match")),
+            ("/smart <task>", tr("help.smart")),
+            ("/war <task> [|| <requirements>]",
+             "%s — %s" % (tr("help.war"), tr("help.war_flow"))),
+            ("/lang [zh|en]", tr("help.lang")),
+            ("/clear", tr("help.clear")),
+        ]
+        width = max(len(cmd) for cmd, _ in rows)
+        lines = ["", "  " + tr("help.title"), "  " + "-" * (width + 24)]
+        for cmd, desc in rows:
+            lines.append("  %s   %s" % (cmd.ljust(width), desc))
+        lines.append("")
+        help_text = chr(10).join(lines)
         self.log_area.config(state="normal")
         self.log_area.insert("end", help_text)
         self.log_area.see("end")
@@ -1074,15 +1424,18 @@ class MilitaryCommandConsole:
             self.is_running = False
             self._root.destroy()
 
-    def run(self, blocking: bool = True):
+    def run(self, blocking: bool = True, demo: bool = False):
         """
         运行控制台
 
         Args:
             blocking: 是否阻塞运行
+            demo: 是否灌入演示数据（默认否）
         """
         self.is_running = True
-        self._log("兵符 · 中军帐 已启动")
+        self._log(tr("app.started"))
+        if self._logo_error:
+            self._log("⚠ 会标未加载（%s），已退回字符装饰" % self._logo_error)
 
         if self.llm_provider:
             self._log(f"🧠 军师已就位：{self.llm_provider}")
@@ -1093,8 +1446,22 @@ class MilitaryCommandConsole:
 
         self._log("输入「帮助」查看自然语言用法，或输入 /help 查看斜杠命令")
 
-        # 初始化示例数据
-        self._init_demo_data()
+        # 演示数据默认**不灌**。
+        #
+        # ★ 这里原来是无条件调用。
+        #
+        #   于是调用方先 add_general() 登记真实将领、
+        #   update_battle_status(0, 0) 写下真实战力，
+        #   然后 run() 再把这些全部覆盖成 30000 : 80000、
+        #   四位将领「作战中/夜观星象」、三条编出来的军情。
+        #
+        #   调用方那边的代码是对的，只是它跑在被覆盖之前 ——
+        #   改对了地方，却不是生效的那个地方。这类 bug 不报错、
+        #   不留痕，界面上的假数据看起来还相当合理。
+        #
+        #   要演示数据就显式要：run(demo=True)。
+        if demo:
+            self._init_demo_data()
 
         if blocking:
             self._root.mainloop()
@@ -1126,10 +1493,44 @@ class MilitaryCommandConsole:
         self.tactics_text.insert("end", "• 断其粮道，围而不攻")
 
     def stop(self):
-        """停止控制台"""
+        """停止控制台并**真正释放窗口**。
+
+        ════════════════════════════════════════════════════════
+         ★ 此前这里只有 quit()，没有 destroy()
+        ════════════════════════════════════════════════════════
+
+        `quit()` 只是让 `mainloop()` 返回 —— 它**不销毁窗口，也不释放
+        Tcl 解释器**。于是每建一次控制台就泄漏一个 Tk 根，
+        而同一个进程里存在多个 Tk 根会互相破坏状态。
+
+        表现出来是这样一句完全指不到真因的话：
+
+            _tkinter.TclError: invalid command name "tcl_findLibrary"
+            This probably means that tk wasn't installed properly.
+
+        ★ 它不只是测试问题，是**产品缺陷**：
+          「开控制台 → 关掉 → 再开一次」在同一进程里必然出错，
+          而报错会让人去怀疑自己的 Tk 装坏了。
+
+        ★ 它是被一个**飘的测试**暴露出来的：失败位置随运行顺序在
+          三条不同的测试之间漂移（单独跑一条、跟全套跑另一条）。
+          那种测试比稳定失败的更危险 —— 人会学会「重跑一次就绿了」。
+
+        ★ 幂等：stop() 可以被安全地调用多次。关两次不该报错。
+        """
+
         self.is_running = False
-        if self._root:
-            self._root.quit()
+        root = self._root
+        if root is None:
+            return
+        self._root = None
+        try:
+            root.quit()      # 让 mainloop 返回
+            root.destroy()   # ★ 真正拆掉窗口与解释器
+        except Exception:  # noqa: BLE001
+            # ★ 窗口可能已经被用户手动关掉了 —— 那时 destroy 会抛异常。
+            #   关闭路径上的异常不该向上冒：调用方此刻已经不关心这个窗口了。
+            pass
 
 
 # 快捷函数
@@ -1139,6 +1540,6 @@ def create_console(**kwargs) -> MilitaryCommandConsole:
 
 
 def launch_demo():
-    """启动演示模式"""
+    """启动演示模式 —— 这里才是该有假数据的地方"""
     console = MilitaryCommandConsole()
-    console.run()
+    console.run(demo=True)

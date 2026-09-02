@@ -6,6 +6,7 @@ Tkinter 组件库
 import tkinter as tk
 from tkinter import ttk
 from typing import Optional, Callable, Dict, Any, List
+from ..i18n import t
 from .styles import COLORS, FONTS, ICONS
 
 
@@ -39,6 +40,14 @@ class StyledFrame(tk.Frame):
                 anchor="w"
             )
             self.title_label.pack(fill="x", padx=5, pady=5)
+        else:
+            self.title_label = None
+
+    def set_title(self, title: str) -> None:
+        """重设标题（语言切换时用）。没有标题栏的框架静默忽略。"""
+
+        if getattr(self, "title_label", None) is not None:
+            self.title_label.config(text=f"  {title}  ")
 
 
 class GeneralCard(tk.Frame):
@@ -113,10 +122,10 @@ class GeneralCard(tk.Frame):
 
         # 状态文字
         status_texts = {
-            "online": "在线",
-            "busy": "作战中",
-            "idle": "待命",
-            "offline": "离线"
+            "online": t("status.online"),
+            "busy": t("status.busy"),
+            "idle": t("status.idle"),
+            "offline": t("status.offline")
         }
         status_label = tk.Label(
             header,
@@ -152,6 +161,13 @@ class BattleStatusPanel(tk.Frame):
 
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
+        #: 战略建议是否仍是默认文案。
+        #:
+        #: ★ 区分「默认文案」与「战役算出来的结论」是必须的：
+        #:   前者该跟着语言走，后者是模型产出的内容，**不能翻译** ——
+        #:   否则切一次语言就把一句真实结论换成了默认文案，
+        #:   而界面上看起来毫无异样。
+        self._strategy_is_default = True
         self._build_ui()
 
     def _build_ui(self):
@@ -159,9 +175,9 @@ class BattleStatusPanel(tk.Frame):
         self.configure(bg=COLORS["bg_dark"])
 
         # 标题
-        title = tk.Label(
+        title = self.title_label = tk.Label(
             self,
-            text=f"{ICONS['battle']} 战役态势",
+            text=f"{ICONS['battle']} {t('panel.battle')}",
             font=FONTS["subtitle"],
             bg=COLORS["bg_dark"],
             fg=COLORS["gold"]
@@ -176,17 +192,24 @@ class BattleStatusPanel(tk.Frame):
         self.own_frame = tk.Frame(info_frame, bg=COLORS["bg_dark"])
         self.own_frame.pack(side="left", fill="both", expand=True)
 
-        tk.Label(
+        self.own_title = tk.Label(
             self.own_frame,
-            text="己方兵力",
+            text=t("battle.ours"),
             font=FONTS["small"],
             bg=COLORS["bg_dark"],
             fg=COLORS["text_secondary"]
-        ).pack()
+        )
+        self.own_title.pack()
 
         self.own_label = tk.Label(
             self.own_frame,
-            text="30000",
+            # ★ 默认 0，不是一个看起来很像真数据的数字。
+            #
+            #   原来这里写死 30000 / 80000 / "以逸待劳，后发制人"——
+            #   程序一启动就显示「敌众我寡」，而此时一道军令都还没下。
+            #   使用者没有办法分辨屏幕上哪些数字是算出来的、哪些是摆设，
+            #   而这个框架的全部主张就是「先量敌我再决定怎么打」。
+            text="0",
             font=FONTS["title"],
             bg=COLORS["bg_dark"],
             fg=COLORS["status_online"]
@@ -207,17 +230,18 @@ class BattleStatusPanel(tk.Frame):
         self.enemy_frame = tk.Frame(info_frame, bg=COLORS["bg_dark"])
         self.enemy_frame.pack(side="right", fill="both", expand=True)
 
-        tk.Label(
+        self.enemy_title = tk.Label(
             self.enemy_frame,
-            text="敌方兵力",
+            text=t("battle.theirs"),
             font=FONTS["small"],
             bg=COLORS["bg_dark"],
             fg=COLORS["text_secondary"]
-        ).pack()
+        )
+        self.enemy_title.pack()
 
         self.enemy_label = tk.Label(
             self.enemy_frame,
-            text="80000",
+            text="0",
             font=FONTS["title"],
             bg=COLORS["bg_dark"],
             fg=COLORS["status_offline"]
@@ -228,17 +252,18 @@ class BattleStatusPanel(tk.Frame):
         strategy_frame = tk.Frame(self, bg=COLORS["bg_medium"], padx=10, pady=10)
         strategy_frame.pack(fill="x", padx=15, pady=(0, 10))
 
-        tk.Label(
+        self.strategy_title = tk.Label(
             strategy_frame,
-            text="战略建议",
+            text=t("battle.strategy"),
             font=FONTS["body"],
             bg=COLORS["bg_medium"],
             fg=COLORS["gold"]
-        ).pack(anchor="w")
+        )
+        self.strategy_title.pack(anchor="w")
 
         self.strategy_label = tk.Label(
             strategy_frame,
-            text="以逸待劳，后发制人",
+            text=t("battle.no_order"),
             font=FONTS["body"],
             bg=COLORS["bg_medium"],
             fg=COLORS["text_primary"],
@@ -247,11 +272,28 @@ class BattleStatusPanel(tk.Frame):
         )
         self.strategy_label.pack(anchor="w")
 
+    def retranslate(self):
+        """语言切换后重绘本面板。"""
+
+        self.title_label.config(text=f"{ICONS['battle']} {t('panel.battle')}")
+        self.own_title.config(text=t("battle.ours"))
+        self.enemy_title.config(text=t("battle.theirs"))
+        self.strategy_title.config(text=t("battle.strategy"))
+        if self._strategy_is_default:
+            self.strategy_label.config(text=t("battle.no_order"))
+
     def update(self, own: int, enemy: int, strategy: str):
         """更新态势数据"""
         self.own_label.config(text=str(own))
         self.enemy_label.config(text=str(enemy))
-        self.strategy_label.config(text=strategy)
+        if strategy is None or strategy == "":
+            # 仍是默认文案 —— 保持跟随语言
+            self.strategy_label.config(text=t("battle.no_order"))
+            self._strategy_is_default = True
+        else:
+            self.strategy_label.config(text=strategy)
+            # 被战役写过之后就不再是默认文案，语言切换不该覆盖它
+            self._strategy_is_default = False
 
 
 class ReportPanel(tk.Frame):
@@ -272,18 +314,19 @@ class ReportPanel(tk.Frame):
         header.pack(fill="x", padx=2, pady=(2, 0))
         header.pack_propagate(False)
 
-        tk.Label(
+        self.title_label = tk.Label(
             header,
-            text=f"  {ICONS['report']} 军情速递  ",
+            text=f"  {ICONS['report']} {t('panel.reports')}  ",
             font=FONTS["subtitle"],
             bg=COLORS["gold_dark"],
             fg=COLORS["bg_dark"]
-        ).pack(side="left")
+        )
+        self.title_label.pack(side="left")
 
         # 清空按钮
-        clear_btn = tk.Button(
+        clear_btn = self.clear_button = tk.Button(
             header,
-            text="清空",
+            text=t("btn.clear"),
             font=FONTS["small"],
             bg=COLORS["gold_dark"],
             fg=COLORS["bg_dark"],
@@ -315,6 +358,10 @@ class ReportPanel(tk.Frame):
 
         self.content_frame.bind("<Configure>",
             lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+
+    def retranslate(self):
+        self.title_label.config(text=f"  {ICONS['report']} {t('panel.reports')}  ")
+        self.clear_button.config(text=t("btn.clear"))
 
     def add_report(self, title: str, content: str, report_type: str = "info"):
         """添加报告"""
@@ -430,11 +477,13 @@ class StatsBar(tk.Frame):
 
         # 默认统计项（增大间距，给数字足够显示空间）
         self._stat_labels = {}
+        # ★ 标题标签也要留引用，否则切换语言时改不到「在线将领」这一栏
+        self._stat_title_labels = {}
         default_stats = [
-            ("generals", "在线将领", "0"),
-            ("tasks", "任务总数", "0"),
-            ("completed", "完成率", "0%"),
-            ("running", "进行中", "0")
+            ("generals", t("stats.generals"), "0"),
+            ("tasks", t("stats.tasks"), "0"),
+            ("completed", t("stats.completed"), "0%"),
+            ("running", t("stats.running"), "0")
         ]
 
         for key, label_text, default_value in default_stats:
@@ -443,7 +492,7 @@ class StatsBar(tk.Frame):
             stat_frame.pack(side="left", padx=15, pady=2)
             stat_frame.pack_propagate(False)  # 保持固定宽度
 
-            tk.Label(
+            title_label = tk.Label(
                 stat_frame,
                 text=label_text,
                 font=FONTS["small"],
@@ -451,7 +500,9 @@ class StatsBar(tk.Frame):
                 fg=COLORS["bg_dark"],
                 anchor="center",
                 width=8
-            ).pack()
+            )
+            title_label.pack()
+            self._stat_title_labels[key] = title_label
 
             value_label = tk.Label(
                 stat_frame,
@@ -464,6 +515,12 @@ class StatsBar(tk.Frame):
             )
             value_label.pack()
             self._stat_labels[key] = value_label
+
+    def retranslate(self):
+        for key in ("generals", "tasks", "completed", "running"):
+            label = self._stat_title_labels.get(key)
+            if label is not None:
+                label.config(text=t("stats.%s" % key))
 
     def update(self, **kwargs):
         """更新统计值"""
@@ -485,9 +542,9 @@ class CommandInput(tk.Frame):
         self.configure(bg=COLORS["bg_dark"], bd=1, highlightbackground=COLORS["gold_dark"], highlightthickness=1)
 
         # 提示符
-        prompt = tk.Label(
+        prompt = self.prompt_label = tk.Label(
             self,
-            text=f"{ICONS['dot']} 军令:",
+            text=f"{ICONS['dot']} {t('input.order')}",
             font=FONTS["mono"],
             bg=COLORS["bg_medium"],
             fg=COLORS["gold"]
@@ -510,9 +567,9 @@ class CommandInput(tk.Frame):
         self.entry.bind("<Return>", self._handle_submit)
 
         # 发送按钮
-        send_btn = tk.Button(
+        send_btn = self.submit_button = tk.Button(
             self,
-            text="传达",
+            text=t("btn.send"),
             font=FONTS["body"],
             bg=COLORS["gold"],
             fg=COLORS["bg_dark"],
@@ -522,6 +579,10 @@ class CommandInput(tk.Frame):
             padx=15
         )
         send_btn.pack(side="right", padx=(0, 10), pady=6)
+
+    def retranslate(self):
+        self.prompt_label.config(text=f"{ICONS['dot']} {t('input.order')}")
+        self.submit_button.config(text=t("btn.send"))
 
     def _handle_submit(self, event=None):
         """处理提交"""

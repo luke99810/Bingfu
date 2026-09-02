@@ -4,7 +4,7 @@ Implements multi‑agent coordination, inspired by ancient Chinese warfare comma
 """
 
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from bingfu.agent import Agent
 from bingfu.signal import Drum, Gong
@@ -137,11 +137,18 @@ class Commander(BaseModel):
 
     # ========== 智能调度 (点兵台) ==========
 
+    def set_llm(self, llm_provider) -> None:
+        """设置LLM Provider（军师），用于智能任务评估"""
+        self._llm = llm_provider
+        if self.__matcher is not None:
+            self.__matcher.assessor = TaskAssessor(llm_provider=llm_provider)
+
     @property
     def matcher(self) -> TaskMatcher:
         """获取点兵台（延迟初始化）"""
         if self.__matcher is None:
-            self.__matcher = TaskMatcher()
+            llm = getattr(self, '_llm', None)
+            self.__matcher = TaskMatcher(assessor=TaskAssessor(llm_provider=llm))
         return self.__matcher
 
     def assess_task(self, task: str) -> TaskAssessment:
@@ -231,27 +238,55 @@ class Commander(BaseModel):
         use_strategy = strategy if strategy else self.strategy
 
         if use_strategy == "smart":
-            # 智能策略 → 调用点兵台
-            result = self.smart_drum(task)
-            return {"smart_dispatch": result}
+            # 智能策略 → 点兵台选一将执行
+            return {"smart_dispatch": self.smart_drum(task)}
 
+        if use_strategy == "graph":
+            # ★ 真正的多智能体：拆解 → 点将 → 按依赖执行 → 汇总
+            result = self.orchestrate(task)
+            out = {"output": result.output}
+            for tid, agent_name in result.assignments.items():
+                node = result.graph.nodes.get(tid)
+                out[f"{tid}({agent_name})"] = (
+                    str(node.output) if node and node.output else f"[{node.status.value if node else '未执行'}]"
+                )
+            return out
+
+        # ── broadcast：把同一个任务发给每个将领 ──────────
+        #
+        # ★ 这**不是协作**，是广播。保留它是因为某些场景确实需要
+        #   多个视角对同一问题各自作答（例如做多样性对比），
+        #   但名字必须诚实。
+        #
+        #   原实现里它叫 round_robin，另有一个叫 priority 的分支
+        #   与它**行为完全相同**（多建了个没用的 priority_list，
+        #   enumerate 的 i 从未使用）—— 三个策略只有两种行为。
+        #   一个名字暗示了顺序语义、实际没有任何顺序的策略，
+        #   比没有这个策略更糟：它让调用方以为自己在调优。
         results = {}
-
-        if use_strategy == "round_robin":
-            for name in self.agents:
-                results[name] = self.drum_one(name, task)
-
-        elif use_strategy == "priority":
-            priority_list = list(self.agents.keys())
-            for i, name in enumerate(priority_list):
-                results[name] = self.drum_one(name, task)
-
-        else:
-            # 自定义策略回退到 round_robin
-            for name in self.agents:
-                results[name] = self.drum_one(name, task)
-
+        for name in self.agents:
+            results[name] = self.drum_one(name, task)
         return results
+
+    def orchestrate(self, task: str, max_workers: int = 4):
+        """多智能体编排：拆解 → 点将 → 按依赖执行 → 汇总。
+
+        ★ 这是 Commander 真正该做的事，也是先前完全缺失的一环。
+
+          返回的 OrchestrationResult 带一个 is_real_collaboration 属性 ——
+          用来自查这次执行到底有没有在协作（多于一个子任务、
+          且至少存在一条依赖边），而不是退化成了并行广播。
+        """
+
+        from bingfu.orchestration import orchestrate as _orchestrate
+
+        return _orchestrate(
+            task,
+            dict(self.agents),
+            llm=self.llm_provider,
+            matcher=self.matcher,
+            max_workers=max_workers,
+        )
     
     def status(self) -> Dict[str, Any]:
         """

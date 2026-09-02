@@ -10,6 +10,34 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
+_DOTENV_LOADED = False
+
+
+def _load_dotenv_once() -> None:
+    """把 `.env` 载进环境变量，整个进程只做一次。
+
+    ★ 已存在的环境变量**优先**（python-dotenv 默认 override=False）：
+      显式 `set DEEPSEEK_API_KEY=...` 应该能盖过项目里的 .env，
+      否则临时换 key 调试会得到一个和你以为的不一样的结果。
+
+    ★ 没装 python-dotenv 不是错误 —— 它是 optional-dependencies 里的东西。
+      直接用环境变量的人不该被强迫装它。静默跳过即可。
+
+    ★ 不在 import 时执行：一个库在被 import 的瞬间就去读磁盘、
+      改进程环境，是很难排查的副作用。放在真正要取 key 的那一刻。
+    """
+
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED:
+        return
+    _DOTENV_LOADED = True
+    try:
+        from dotenv import find_dotenv, load_dotenv
+    except ImportError:
+        return
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+
+
 class LLMConfig(BaseModel):
     """
     单个 LLM Provider 的配置 (一员军师的委任状)
@@ -45,7 +73,18 @@ class LLMConfig(BaseModel):
         if self.api_key:
             return self.api_key
 
-        # 环境变量回退
+        # ★ 先把 .env 载进环境，再读环境变量。
+        #
+        #   此前这一步不存在：README 明确告诉用户「把 key 放进 .env」，
+        #   而**主链路从来不读那个文件** —— load_dotenv() 只出现在
+        #   langchain_integration.py 和一个示例里。
+        #
+        #   于是用户照文档配好 .env，launch.py 依然打印
+        #   「⚠️ 未检测到 DEEPSEEK_API_KEY，将领将以关键词匹配模式运作」——
+        #   一个**产出方齐全、消费方缺席**的缺口，
+        #   而现象（降级运行）看起来像是"没配 key"，指不到真因。
+        _load_dotenv_once()
+
         env_map = {
             "deepseek": "DEEPSEEK_API_KEY",
             "openai": "OPENAI_API_KEY",

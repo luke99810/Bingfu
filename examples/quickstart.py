@@ -6,6 +6,11 @@ BingFu 快速入门指南 (Quick Start Guide)
     python examples/quickstart.py
 """
 
+# ★ 让这个示例在**未安装包**的情况下也能直接跑（见 _bootstrap.py）。
+#   没有这一行，clone 下来第一条 `python examples/xxx.py` 就是
+#   ModuleNotFoundError —— 六个示例此前无一例外。
+import _bootstrap  # noqa: F401
+
 from bingfu import BingFu, Agent, Tool, Memory
 from bingfu.commander import Commander
 from bingfu.signal import drum, gong
@@ -156,33 +161,39 @@ def quickstart_5_tactics_engine():
     print("🚀 快速入门 5: 孙子兵法战术引擎")
     print("=" * 60)
 
-    from bingfu.tactics import TacticsEngine, TacticalContext
+    # ★ 这一段原先用的是 `TacticsEngine` 和 `engine.analyze(context)` ——
+    #   两者都已不存在（引擎改名为 TacticEngine，接口换成了 select_tactic）。
+    #   于是**快速入门**，新人跑的第一条命令，直接 ImportError。
+    #   它能一直坏着，唯一的原因是没有任何东西跑过 examples/。
+    from bingfu.presets import PRESET_GENERALS, get_preset
+    from bingfu.tactics import TacticEngine
 
-    # 创建战术引擎
-    engine = TacticsEngine()
+    # 备好将领 —— 战术是「选给谁用」的，没有将领就无从谈起
+    generals = {
+        name: Agent(name=name, profile=get_preset(name))
+        for name in list(PRESET_GENERALS)[:3]
+    }
+    print("\n⚔️ 可用将领: " + "、".join(generals))
 
-    # 创建战场态势
-    context = TacticalContext(
-        self_strength=30000,      # 我军兵力
-        enemy_strength=80000,     # 敌军兵力
-        terrain="山地",           # 地形
-        morale=70                 # 士气(0-100)
+    engine = TacticEngine()
+    task = "我军三万对敌八万，需在山地拖住对方主力"
+    print(f"📜 任务: {task}")
+
+    # 核心接口：为「任务 + 将领池」选出最优的（战术, 将领）配对
+    result = engine.select_tactic(task, generals)
+
+    ctx = result.tactical_context
+    print(
+        f"\n🗺️ 战场态势: {ctx.regime}"
+        f"（我方 {ctx.self_strength:.0f} / 敌方 {ctx.enemy_strength:.0f}，地形 {ctx.terrain}）"
     )
-
-    print("\n⚔️ 战场态势:")
-    print(f"  我军兵力: {context.self_strength}")
-    print(f"  敌军兵力: {context.enemy_strength}")
-    print(f"  地形: {context.terrain}")
-    print(f"  士气: {context.morale}%")
-
-    # 分析战场
-    result = engine.analyze(context)
-
-    print(f"\n📜 战术建议: {result['recommended_tactic']['strategy']}")
-    print(f"🎯 推荐策略: {result['recommended_tactic']['principle']}")
-    print(f"\n📋 具体战术:")
-    for tactic in result['recommended_tactic']['tactics']:
-        print(f"  • {tactic['name']}: {tactic['advice']}")
+    print(f"🎯 推荐战术: {result.selected_tactic.name}")
+    print(f"👤 建议派遣: {result.selected_agent_name}")
+    print(
+        f"📊 综合得分: {result.combined_score:.3f}"
+        f"（对齐 {result.alignment_score:.3f} · 战力 {result.power_score:.3f}）"
+    )
+    print(f"\n💡 理由: {result.explanation}")
 
     print("\n✅ 完成! 学会了使用战术引擎。")
 
@@ -226,26 +237,25 @@ def quickstart_7_famous_generals():
     print("🚀 快速入门 7: 古代名将")
     print("=" * 60)
 
-    from bingfu.tactics import SunTzuAgent, TacticalContext
+    # ★ 第二处旧 API：`sunbin.analyze_battlefield(context)` 也已不存在，
+    #   现在的接口是 `analyze_and_recommend(task, agents)` ——
+    #   输入从「战场态势对象」变成了「任务 + 将领池」，态势由引擎自己推导。
+    from bingfu.presets import PRESET_GENERALS, get_preset
+    from bingfu.tactics import SunTzuAgent
 
-    # 创建孙子Agent
     sunbin = SunTzuAgent(name="孙子")
-
     print(f"\n📍 创建名将: {sunbin.name}")
-    print(f"   角色: {sunbin.role}")
-    print(f"   描述: {sunbin.role} - 兵家至圣")
 
-    # 模拟战场分析
+    generals = {
+        name: Agent(name=name, profile=get_preset(name))
+        for name in list(PRESET_GENERALS)[:3]
+    }
+
     print("\n⚔️ 孙子曰:")
-    context = TacticalContext(
-        self_strength=30000,
-        enemy_strength=80000,
-        terrain="山地",
-        morale=70
-    )
-    result = sunbin.analyze_battlefield(context)
-    advice = result['recommended_tactic']['strategy']
-    print(f"  {advice}")
+    result = sunbin.analyze_and_recommend("我军三万对敌八万，需在山地拖住对方主力", generals)
+    print(f"  战术：{result.selected_tactic.name}")
+    print(f"  派遣：{result.selected_agent_name}")
+    print(f"  {result.explanation}")
 
     # 获取兵法智慧
     wisdom = sunbin.get_wisdom()

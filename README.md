@@ -25,7 +25,61 @@ The framework is designed to be simple, extensible, and fun, with a nod to Chine
 - **Tactics Engine**: Built‑in Sun Tzu's Art of War strategy support
 - **Famous Generals**: Pre‑built agents inspired by legendary Chinese generals
 - **Visualization**: Desktop console (MilitaryCommandConsole) with ancient military style
-- **LangChain Integration**: Support for LangChain agents, memory, and RAG retrieval
+- **LangChain Integration**: Support for LangChain agents, memory, and RAG retrieval (LangChain v1.x + DeepSeek compatible)
+- **LLM Providers**: DeepSeek (default), OpenAI, and any OpenAI-compatible API (Qwen/GLM/Ollama)
+- **General Power System**: 5-dim combat stats, LLM+rule task assessment, smart general matching
+
+## 📊 Evaluation (Preliminary)
+
+A cross-framework benchmark is included under [`bench/`](bench/). The suite compares BingFu
+against four widely used frameworks plus a single-call floor, on the same tasks, tools and model.
+
+**Scale of the current run:** 6 systems × 12 tasks × 10 repeats = **720 runs**.
+
+| System | Passed | Median tokens | Median LLM calls |
+|---|---|---|---|
+| LangGraph | 120/120 | 1,716 | 3 |
+| **BingFu** | **120/120** | **1,769** | **3** |
+| AutoGen | 120/120 | 1,856 | 3 |
+| PydanticAI | 119/120 | 1,776 | 3 |
+| CrewAI | 110/120 | 1,824 | 3 |
+| Single-call floor | 0/120 | 169 | 1 |
+
+> Pass criterion: all required checks hit and no forbidden action triggered
+> (`bench/cross_framework.py :: Run.passed`).
+
+### ⚠️ These results are preliminary — please read this before citing them
+
+1. **The frameworks are not separated by these tasks.** Four of five sit at 119–120/120 and their
+   median token cost spans only ~8% (1,716–1,856). Eleven of twelve tasks are at ceiling for every
+   framework — **all of the observed differentiation comes from a single task shape (`safety`)**.
+   A benchmark on which everyone scores full marks measures the benchmark, not the systems.
+2. **Tasks are too short and too easy.** Every run finishes in a median of 3 LLM calls. Whatever a
+   coordination framework is for, it does not show up at this length.
+3. **Single model, single language.** All runs use one chat model with one prompt language. Nothing
+   here shows whether the conclusions survive a different model family, size, or locale.
+
+**Therefore this repository makes no claim that BingFu outperforms the alternatives.** The honest
+reading of the table above is *parity under an easy benchmark*.
+
+### What is needed next
+
+- **Harder, longer tasks** — multi-stage work with real dependencies, where a run takes tens of
+  steps rather than three, so that coordination and recovery behaviour becomes observable.
+- **Multi-model validation** — repeating the suite across several model families and sizes to
+  separate framework effects from model effects.
+- Per-run significance testing rather than point estimates.
+
+### What this repository does and does not contain
+
+| Included | Not yet included |
+|---|---|
+| Core framework (`bingfu/`) | Raw per-run result files |
+| Benchmark suite: tasks, criteria, adapters, runners (`bench/`) | Full evaluation report |
+| Unit tests, examples | Figures and paper material |
+
+**The complete evaluation procedure and the evaluation report will be released progressively.**
+Until then, treat the numbers above as a first sanity check, not as a result.
 
 ## 📦 Installation
 
@@ -34,9 +88,15 @@ The framework is designed to be simple, extensible, and fun, with a nod to Chine
 git clone https://github.com/luke99810/bingfu.git
 cd bingfu
 
-# Install the package (editable mode)
+# Install core package (editable mode)
 pip install -e .
+
+# [Optional] One-click LangChain + RAG environment setup
+python setup_env.py
 ```
+
+> **🔑 API Key**: Set `DEEPSEEK_API_KEY` or `OPENAI_API_KEY` environment variable.
+> Without an API key, the framework runs in rule-based mode (task matching still works).
 
 ## 🚀 Quick Start
 
@@ -180,7 +240,8 @@ print(f"Sun Tzu's Advice: {advice['recommended_tactic']['strategy']}")
 
 ### LangChain Integration
 
-BingFu v0.6.0 introduces LangChain integration for enhanced agent capabilities:
+BingFu v0.6.0 introduces LangChain integration for enhanced agent capabilities.
+**Now compatible with LangChain v1.x** and auto-detects DeepSeek models:
 
 ```python
 from bingfu import LangChainAgent, LangChainMemory, RAGRetriever
@@ -204,6 +265,8 @@ retriever.add_documents([
     "Sun Tzu's Art of War has 13 chapters.",
     "The supreme art of war is to subdue the enemy without fighting."
 ])
+
+# Embedding fallback: if no OpenAI key, run `python setup_env.py` for local model
 
 # 3. Use RAG for knowledge-enhanced queries
 results = retriever.similarity_search("What is the best strategy?", k=3)
@@ -422,6 +485,54 @@ console.stop()
 - **古代名将Agent**：白起、韩信、项羽、诸葛亮等预置Agent
 - **可视化控制台**：古代军事风格桌面界面（中军帐）
 
+## 📊 评测（初步）
+
+仓库内的 [`bench/`](bench/) 是一套跨框架评测:在**相同任务、相同工具、相同模型**下,
+把兵符与四个常用框架以及一个"单次调用"下界放在一起跑。
+
+**本轮规模:** 6 个系统 × 12 个任务 × 10 次重复 = **720 次运行**。
+
+| 系统 | 通过 | 中位 token | 中位调用次数 |
+|---|---|---|---|
+| LangGraph | 120/120 | 1,716 | 3 |
+| **兵符 BingFu** | **120/120** | **1,769** | **3** |
+| AutoGen | 120/120 | 1,856 | 3 |
+| PydanticAI | 119/120 | 1,776 | 3 |
+| CrewAI | 110/120 | 1,824 | 3 |
+| 单次调用（下界） | 0/120 | 169 | 1 |
+
+> 通过判据:该命中的判据全部命中,且没有触发任何禁止项
+> （`bench/cross_framework.py :: Run.passed`）。
+
+### ⚠️ 这是初步结果 —— 引用前请先读这一段
+
+1. **这批任务区分不出这些框架。** 五家里有四家落在 119–120/120,中位 token 差距只有约 8%
+   （1,716–1,856）。十二道题里有十一道所有框架都满分 —— **全部可见的差异只来自一种任务形状
+   （`safety`）**。一个人人满分的评测集,量的是评测集本身,不是被测系统。
+2. **任务偏短、偏简单。** 每次运行的中位调用次数只有 3 次。协同框架真正要解决的问题,
+   在这个长度上根本不会显现。
+3. **单一模型、单一语言。** 所有运行都用同一个对话模型、同一种提示词语言。
+   现有数据无法说明换一个模型家族、换一个参数规模或换一种语言后,结论是否还成立。
+
+**因此本仓库不主张兵符优于其他框架。** 上表最诚实的读法是:**在一个偏简单的评测集上打平**。
+
+### 后续需要补的
+
+- **更复杂、更长的任务** —— 有真实依赖关系的多阶段任务,单次运行是几十步而不是三步,
+  这样协同与故障恢复的行为才可观测。
+- **多模型验证** —— 在多个模型家族与参数规模上重跑整套评测,把框架效应与模型效应分开。
+- 逐次运行的显著性检验,而不是只报点估计。
+
+### 本仓库包含什么、不包含什么
+
+| 已包含 | 暂未包含 |
+|---|---|
+| 核心框架代码（`bingfu/`） | 逐次运行的原始结果文件 |
+| 评测集:任务、判据、适配器、运行器（`bench/`） | 完整评测报告 |
+| 单元测试、示例 | 论文配图与相关材料 |
+
+**完整的测评过程与测评报告将陆续公开。** 在此之前,请把上表当作一次初步的自检,而不是结论。
+
 ## 📦 安装
 
 ```bash
@@ -429,9 +540,15 @@ console.stop()
 git clone https://github.com/luke99810/bingfu.git
 cd bingfu
 
-# 安装包（可编辑模式）
+# 安装核心包（可编辑模式）
 pip install -e .
+
+# [可选] 一键安装 LangChain + RAG 环境
+python setup_env.py
 ```
+
+> **🔑 API Key**: 设置环境变量 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY`。
+> 无 API Key 时框架以规则模式运行（任务匹配仍可正常工作）。
 
 ## 🚀 快速开始
 
@@ -670,21 +787,44 @@ bingfu-framework/
 
 ## 📝 Development Status (开发状态)
 
+**Current Version**: v0.6.0
+
 | 功能 | 状态 |
 |------|------|
-| 项目初始化 | ✅ 完成 |
-| 核心模块 (Agent, Tool, Memory) | ✅ 完成 |
-| 信号系统 (击鼓/鸣金) | ✅ 完成 |
-| 指挥官系统 | ✅ 完成 |
-| 兵符主类 | ✅ 完成 |
+| 核心模块 (Agent, Tool, Memory, Signal) | ✅ 完成 |
+| 指挥官多Agent协调 | ✅ 完成 |
 | CLI命令行界面 | ✅ 完成 |
 | 孙子兵法战术引擎 | ✅ 完成 |
-| 古代名将示例 | ✅ 完成 |
-| 扩展示例 | ✅ 完成 |
-| 单元测试 | ✅ 完成 |
-| 可视化控制台 | ✅ 完成 |
+| 将军战力体系 (5维+智能派兵) | ✅ 完成 |
+| 可视化控制台 (Tkinter) | ✅ 完成 |
 | LangChain集成 (Agent/Memory/RAG) | ✅ 完成 |
-| Web版本 | 🔜 未来版本 |
+| DeepSeek LLM Provider | ✅ 完成 |
+| OpenAI兼容Provider (Qwen/GLM/Ollama) | ✅ 完成 |
+| LangChain v1.x 兼容 | ✅ 完成 |
+| RAG embedding回退 (OpenAI→HuggingFace) | ✅ 完成 |
+| 单元测试 | ✅ 完成 |
+| Web版本 | 🔜 计划中 |
+| 分布式Agent | 🔜 计划中 |
+
+## 🔧 Compatibility (兼容性)
+
+| Component | Support | Notes |
+|-----------|---------|-------|
+| Python | 3.9+ | |
+| LangChain | 1.x | Uses `langchain-classic` for backward compat |
+| LLM | DeepSeek / OpenAI / Compatible | Default: DeepSeek `deepseek-chat` |
+| Vector Store | FAISS / Chroma | FAISS recommended |
+| Embeddings | OpenAI + HuggingFace fallback | Run `python setup_env.py` for local model |
+| OS | Windows / macOS / Linux | Visual console requires Tkinter |
+
+### RAG Embedding Fallback
+
+```
+RAGRetriever._init_embeddings()
+  ├── 1. OpenAI embeddings   (requires OPENAI_API_KEY)
+  ├── 2. HuggingFace local   (langchain-huggingface + all-MiniLM-L6-v2, ~80MB)
+  └── 3. HuggingFace compat  (sentence-transformers)
+```
 
 ## 📄 License
 

@@ -15,6 +15,19 @@ from bingfu.signal import Drum, Gong, drum, gong
 from bingfu.commander import Commander
 
 
+
+def _package_version() -> str:
+    """包版本的单一来源 —— `bingfu.__version__`。
+
+    ★ 延迟 import：这个模块被 `bingfu/__init__.py` 导入，
+      顶层 import 会形成循环。
+    """
+
+    from bingfu import __version__
+
+    return __version__
+
+
 class BingFu(BaseModel):
     """
     BingFu (兵符) — main class of the framework.
@@ -22,7 +35,16 @@ class BingFu(BaseModel):
     """
     
     name: str = Field(default="BingFu", description="Framework name")
-    version: str = Field(default="0.5.0", description="Framework version")
+    version: str = Field(
+        default_factory=lambda: _package_version(),
+        description="Framework version",
+    )
+    """★ 不再写死。此前全项目有**四个不同的版本号**：
+
+    pyproject 0.6.0 · __init__ 0.6.0 · 这里 0.5.0 · config.yaml 0.1.0，
+    launch.py 还打印 v0.5.0 —— `bingfu status` 报的版本和包的真实版本对不上，
+    而对不上这件事没有任何地方会提示。
+    """
     
     # Core components (核心组件)
     agents: Dict[str, Agent] = Field(
@@ -116,6 +138,19 @@ class BingFu(BaseModel):
     
     # ========== Tool Management (工具管理) ==========
     
+    def list_agents(self) -> List[Agent]:
+        """列出全部将领。
+
+        ★ 同样是被示例（examples/famous_generals.py:241）用了、
+          却从来不存在的方法。有 add_agent / remove_agent / get_agent
+          却没有列举，缺口很明显。
+
+        ★ 返回 list 而不是 dict 的视图：调用方常要排序、切片、
+          按 role 过滤，给一个普通列表最省事。
+        """
+
+        return list(self.agents.values())
+
     def add_tool(self, tool: Tool) -> None:
         """
         Add a tool to BingFu.
@@ -319,6 +354,10 @@ class BingFu(BaseModel):
         """
         self.commander = Commander(name=name)
         
+        # Pass LLM to commander for smart assessment
+        if self.default_llm:
+            self.commander.set_llm(self.default_llm)
+        
         # Add existing agents to commander
         for agent in self.agents.values():
             self.commander.add_agent(agent)
@@ -338,11 +377,44 @@ class BingFu(BaseModel):
             config_file (str): Path to config YAML file.
         """
         with open(config_file, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+            self.config = yaml.safe_load(f) or {}
+
+        # ★ 恢复将领名册。
+        #
+        #   此前 save_config 只写 self.config（那份原始 YAML 字典），
+        #   **agents 从不落盘**，load_config 也从不读它。于是
+        #   `bingfu add-agent 韩信` 打印「已添加」，进程一退将领就没了，
+        #   下一条命令报「军中无此将领」——
+        #   一条报告成功而实际什么都没发生的命令。
+        #
+        #   只补 name/role/description 三个字段：它们是**声明性**的。
+        #   llm / memory / tools 是运行期装配出来的活对象，
+        #   序列化它们只会得到一份看起来像、其实连不上的假名册。
+        self._load_agents_from_config()
 
         # 自动初始化 LLM
         if self.config and "llm" in self.config:
             self._init_llm_from_config()
+
+    def _load_agents_from_config(self) -> None:
+        """从配置里的 `agents:` 段恢复将领。"""
+
+        roster = (self.config or {}).get("agents")
+        if not isinstance(roster, list):
+            return
+        for entry in roster:
+            if not isinstance(entry, dict) or not entry.get("name"):
+                # ★ 跳过坏条目而不是整个失败：一条手写错的记录
+                #   不应该让整份名册都载不进来。
+                continue
+            name = str(entry["name"])
+            if name in self.agents:
+                continue
+            self.agents[name] = Agent(
+                name=name,
+                role=entry.get("role"),
+                description=entry.get("description"),
+            )
 
     def _init_llm_from_config(self) -> None:
         """从配置初始化 LLM Manager 和默认 Provider"""
@@ -385,9 +457,21 @@ class BingFu(BaseModel):
         Args:
             config_file (str): Path to config YAML file.
         """
-        if self.config:
-            with open(config_file, "w", encoding="utf-8") as f:
-                yaml.dump(self.config, f, allow_unicode=True, default_flow_style=False)
+        # ★ 无条件写。此前是 `if self.config:` —— 一个全新的 BingFu
+        #   （config 为 None）调用 save_config **什么都不做且不报错**，
+        #   于是 `bingfu add-agent` 静默失联。
+        #   「没有配置」不等于「不需要保存」。
+        payload = dict(self.config or {})
+        payload["agents"] = [
+            {
+                "name": agent.name,
+                **({"role": agent.role} if agent.role else {}),
+                **({"description": agent.description} if agent.description else {}),
+            }
+            for agent in self.agents.values()
+        ]
+        with open(config_file, "w", encoding="utf-8") as f:
+            yaml.dump(payload, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
     
     # ========== Status & Info (状态与信息) ==========
     

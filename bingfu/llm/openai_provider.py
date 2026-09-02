@@ -21,6 +21,12 @@ from bingfu.llm.config import LLMConfig
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
+REQUEST_TIMEOUT_SECONDS = 120.0
+"""单次请求超时（秒）。超过就抛，由上层决定重试还是记故障。"""
+
+MAX_RETRIES = 3
+"""SDK 内建重试次数 —— 瞬时抖动自愈，不惊动上层。"""
+
 class OpenAIProvider(LLMProvider):
     """
     OpenAI 适配器 (正规军师)
@@ -57,6 +63,23 @@ class OpenAIProvider(LLMProvider):
             self._client = OpenAI(
                 api_key=api_key,
                 base_url=base_url,
+                # ★★ 必须设超时与重试。
+                #
+                #   此前两个 provider 都没设 —— OpenAI SDK 的默认行为下，
+                #   一次半开连接会让调用**永久阻塞**。
+                #
+                #   实测代价：一轮 700 次的实验跑到 410 次时挂死，
+                #   进程 8 小时 20 分钟 CPU 时间只用了 7 秒（全程阻塞在 socket 上），
+                #   而**外部完全看不出异常** —— 进度条停着、进程活着、
+                #   网络实际是通的。看起来就像"还在跑，只是慢"。
+                #
+                #   ★ 这类故障比崩溃难查得多：崩溃会留下栈，挂死什么都不留。
+                #     长任务里没有超时，等于把整轮实验押在网络永不抖动上。
+                #
+                #   timeout 覆盖单次请求；max_retries 让瞬时故障自愈，
+                #   两者缺一不可 —— 只设超时会把可恢复的抖动变成硬失败。
+                timeout=REQUEST_TIMEOUT_SECONDS,
+                max_retries=MAX_RETRIES,
             )
         return self._client
 

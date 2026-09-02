@@ -5,14 +5,21 @@
 pydantic>=2.0.0,<3.0.0
 pyyaml>=6.0.0,<7.0.0
 requests>=2.28.0,<3.0.0
+openai>=1.0.0,<3.0.0
+numpy>=1.21.0   # 硬依赖：tactic_definitions 顶层 import，缺了连 import bingfu 都会失败
 
 # Optional: LangChain integration (for RAG, advanced memory, etc.)
-# Install with: pip install langchain langchain-openai langchain-community faiss-cpu
-# langchain>=0.1.0,<0.2.0
-# langchain-openai>=0.1.0
-# langchain-community>=0.0.20
-# faiss-cpu>=1.7.2
-# python-dotenv>=1.0.0
+# Install with: pip install langchain langchain-openai langchain-classic langchain-community langchain-text-splitters langchain-huggingface faiss-cpu chromadb sentence-transformers
+# Or run: python setup_env.py
+langchain>=0.3.0,<2.0.0
+langchain-openai>=0.1.0
+langchain-classic>=0.1.0
+langchain-community>=0.0.20
+langchain-text-splitters>=0.1.0
+faiss-cpu>=1.7.2
+python-dotenv>=1.0.0
+# langchain-huggingface>=0.1.0  # Uncomment for local embeddings
+# sentence-transformers>=3.0.0  # Uncomment for local embeddings
 
 # Development dependencies
 pytest>=7.0.0,<8.0.0

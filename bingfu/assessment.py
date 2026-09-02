@@ -117,6 +117,25 @@ class TaskAssessor:
             return self._assess_with_llm(task)
         return self._assess_with_rules(task)
 
+    def assess_fast(self, task: str) -> TaskAssessment:
+        """不调模型的庙算 —— 只走规则。
+
+        ★ 用途：**子任务级**的点将。
+
+          战役级的庙算值得花一次调用；但拆解出的每个子任务再各庙算一次
+          就是纯浪费 —— 实测一次「写三个文件」的战役里庙算跑了 4 次：
+          战役级 1 次 + 每个子任务 1 次，后三次合计 587 tokens，
+          而它们只是为了给点兵台一个打分依据。
+
+          点兵台的评分本身是本地向量运算，它需要的只是
+          「所需能力」与「复杂度」两个粗粒度输入 —— 规则路径足够。
+
+        ★ 附带的好处是确定性：同一段描述永远得到同一份评估，
+          于是「为什么点了这位将领」可复算。
+        """
+
+        return self._assess_with_rules(task)
+
     def _assess_with_llm(self, task: str) -> TaskAssessment:
         """
         LLM 驱动的任务评估
@@ -271,3 +290,105 @@ class TaskAssessor:
 
         enemy_power = int((base + cap_bonus) * factor)
         return max(10, min(200, enemy_power))
+
+
+# ── 交付物计数 ──────────────────────────────────────────
+
+#: 「写/产出」类动词，后面跟的文件名才算**交付物**而不是素材
+_PRODUCE_VERB = (
+    "写", "写入", "写进", "写到", "生成", "产出", "输出", "创建", "新建", "保存",
+    "write", "create", "generate", "output", "save", "produce",
+)
+
+_FILENAME = re.compile(r"[\w\-.]+\.[A-Za-z0-9]{1,5}")
+
+
+#: 「需要不止一种将领」的能力数门槛。
+#:
+#: ★ 这个数是**标定出来的，不是推导出来的**，必须说清楚：
+#:   跨框架基准那 12 道题，规则版抽出的能力数是 1–2；
+#:   几个明显该拆的任务（检索+分析+编码、分析+建模）是 3–5。
+#:   门槛取 3，落在这条缝里。
+#:
+#: ★ 标定样本很小，而且**这套基准无法验证它** —— 基准里没有
+#:   任何一道需要拆解的题（120 次运行计划全部单节点）。
+#:   所以这是一个**判断**，不是一个测量结果。
+#:   要验证它，得先有一类拆解真能赢的任务。
+MULTI_ROLE_CAPABILITIES = 3
+
+#: 「产物多到一个人做不划算」的交付物数门槛（需与 ≥2 种能力同时成立）
+MANY_DELIVERABLES = 3
+
+
+def needs_orchestration(task: str, assessment: Any = None) -> bool:
+    """这活要不要动用不止一位将领 —— **不调模型**。
+
+    ════════════════════════════════════════════════════
+     为什么闸门不该花一次调用
+    ════════════════════════════════════════════════════
+
+    原先的闸门是「LLM 给一个 1–10 的复杂度分，低于阈值就单干」。
+    实测下来这个设计有三处问题：
+
+    ★ 它**有噪声**。同一道 agg-pick 连问两次，一次得 4、一次得 3。
+      花一次网络往返买一个抖动的数，再拿它去过一道阈值线。
+
+    ★ 它**几乎从不改变结论**。12 道题里规则版与 LLM 版唯一一次分歧是
+      robust-missing（规则 4、LLM 5），而那一次 LLM 是**错的** ——
+      越过闸门之后「读一个文件、写一个文件」被拆成两个子任务，
+      13 次调用、14 311 token，对手是 3 次、1 750。
+
+    ★ 它问错了问题。「这题有多难」是个连续量，而拆解是个**结构决定**：
+      这活要不要不止一种将领？多难都不重要 ——
+      一件很难但只需要一位将领的事，拆开只会多付几套 ReAct 开销。
+
+    ════════════════════════════════════════════════════
+     换成什么
+    ════════════════════════════════════════════════════
+
+    两个都从任务文本上直接读、零成本、且**确定性**
+    （同一段描述永远得到同一个结论，于是「为什么没拆」可复算）：
+
+      一、所需能力种类 ≥ 3        —— 需要不同类型的将领
+      二、交付物 ≥ 3 且能力 ≥ 2   —— 产物多到一个人做不划算
+
+    ★ 保守方向是**倾向不拆**：少拆的代价是少一点并行，
+      多拆的代价是每个子任务各付一套 ReAct、还可能互相覆盖产物。
+      实测后者贵得多。
+
+    ★ 想强制拆解的调用方仍然可以：`orchestrate(..., force_decompose=True)`。
+      闸门是默认策略，不是不可绕过的规则。
+    """
+
+    from bingfu.assessment import TaskAssessor  # 局部导入，避免循环
+
+    if assessment is None:
+        assessment = TaskAssessor()._assess_with_rules(task)
+    caps = len(getattr(assessment, "required_capabilities", ()) or ())
+    if caps >= MULTI_ROLE_CAPABILITIES:
+        return True
+    return deliverable_count(task) >= MANY_DELIVERABLES and caps >= 2
+
+
+def deliverable_count(task: str) -> int:
+    """数出任务里有几件**独立交付物**。
+
+    ★ 只数被「写/生成/输出」这类动词带出来的文件名。
+
+      素材与交付物必须分开数：`chain-sum` 里 data.csv 是输入、
+      total.md 是产出，全都算上就成了 2 件，
+      于是一件事被当成可拆的两件。
+
+    ★ 这是启发式，会**低估**（没点名文件的任务数出 0）。
+      所以调用方只用它来决定「要不要多花一次调用去问」，
+      不用它单独决定拆不拆 —— 低估的代价必须是少花钱，
+      不能是少干活。
+    """
+
+    text = str(task or "")
+    found = set()
+    for m in _FILENAME.finditer(text):
+        head = text[max(0, m.start() - 14):m.start()]
+        if any(v in head.lower() for v in _PRODUCE_VERB):
+            found.add(m.group(0))
+    return len(found)

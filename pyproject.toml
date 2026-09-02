@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bingfu"
-version = "0.5.0"
+version = "0.6.0"
 authors = [
     { name = "SuXin (州哥)", email = "luke99810@example.com" },
 ]
-description = "兵符 BingFu: 轻量级多智能体框架，支持将军战力体系 + 智能派兵 + LLM 接入"
+description = "兵符 BingFu: 轻量级多智能体框架 v0.6.0 — LangChain/RAG集成 + DeepSeek/OpenAI多LLM支持 + 将军战力体系 + 智能派兵"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -16,9 +16,36 @@ dependencies = [
     "pyyaml>=6.0",
     "requests>=2.28",
     "openai>=1.0",
+    # ★ numpy 是**硬依赖**，不是可选项。
+    #
+    #   tactic_definitions.py 顶层 `import numpy`，而 __init__.py 会加载它 ——
+    #   也就是说少了 numpy，连 `import bingfu` 都会 ModuleNotFoundError。
+    #
+    #   它此前一直没被声明，而在作者的 Anaconda 环境里 numpy 是预装的，
+    #   所以本机一切正常。实测：干净 venv 里 `pip install .` 成功、
+    #   `import bingfu` 立即失败 —— 任何按文档安装的人拿到的都是装不起来的包。
+    #
+    #   战术对齐打分（style_vector 点积 / 范数 / softmax）就建立在它上面，
+    #   属于核心算法，不能靠 try 降级绕过去。
+    "numpy>=1.21",
 ]
 
 [project.optional-dependencies]
+langchain = [
+    "langchain>=0.3.0",
+    "langchain-openai>=0.1.0",
+    "langchain-classic>=0.1.0",
+    "langchain-community>=0.0.20",
+    "langchain-text-splitters>=0.1.0",
+    "faiss-cpu>=1.7.2",
+    "chromadb>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+rag = [
+    "langchain-huggingface>=0.1.0",
+    "sentence-transformers>=3.0.0",
+]
+
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

@@ -4,6 +4,11 @@ Demonstrates how to create custom agents with tools and memory.
 Inspired by ancient Chinese warfare: 练兵 (training soldiers).
 """
 
+# ★ 让这个示例在**未安装包**的情况下也能直接跑（见 _bootstrap.py）。
+#   没有这一行，clone 下来第一条 `python examples/xxx.py` 就是
+#   ModuleNotFoundError —— 六个示例此前无一例外。
+import _bootstrap  # noqa: F401
+
 from bingfu import BingFu, Agent, Tool, Memory
 from bingfu.signal import drum, gong
 

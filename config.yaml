@@ -8,7 +8,9 @@ core:
   framework_name: "BingFu"
   
   # Version (版本)
-  version: "0.1.0"
+  # ★ 这里原先写死 "0.1.0" —— 与包的真实版本差了两个大版本。
+  #   版本以 bingfu.__version__ 为准；此处仅作记录，不参与逻辑。
+  version: "0.6.0"
   
   # Debug mode (调试模式)
   debug: false
